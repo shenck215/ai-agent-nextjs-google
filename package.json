@@ -9,9 +9,17 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/google": "3.0.31",
+    "@ai-sdk/react": "3.0.101",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "ai": "6.0.99",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
