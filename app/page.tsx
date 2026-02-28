@@ -4,8 +4,20 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, FileUIPart } from "ai";
+import { DefaultChatTransport, FileUIPart, UIMessage } from "ai";
 import { useState, useCallback, useEffect, useRef } from "react";
+
+export type ChatSession = {
+	id: string;
+	title: string;
+	updatedAt: number;
+	messages: UIMessage[];
+	model?: "fast" | "thinking" | "image";
+};
+
+function generateId() {
+	return Math.random().toString(36).substring(2, 10);
+}
 import MarkdownRenderer from "./components/markdown-renderer";
 import { PriceCard } from "./components/tools/price-card";
 
@@ -129,13 +141,21 @@ async function filesToFileUIParts(files: File[]): Promise<FileUIPart[]> {
 	);
 }
 
-export default function Chat() {
+function ChatWindow({
+	session,
+	onSaveSession,
+}: {
+	session: ChatSession;
+	onSaveSession: (session: ChatSession) => void;
+}) {
 	// 自动滚动 Refs (Move to top to fix React Compiler issue)
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const isUserScrolled = useRef(false);
 	const [bgColor, setBgColor] = useState<string>("#ffffff");
-	const [model, setModel] = useState<"fast" | "thinking" | "image">("fast");
+	const [model, setModel] = useState<"fast" | "thinking" | "image">(
+		session.model || "fast",
+	);
 	// 灯笸预览图片 URL
 	const [viewingImage, setViewingImage] = useState<string | null>(null);
 	const {
@@ -147,10 +167,38 @@ export default function Chat() {
 		error,
 		clearError,
 	} = useChat({
+		id: session.id,
 		transport: new DefaultChatTransport({
 			api: "/api/chat",
 		}),
 	});
+
+	const isInitialized = useRef(false);
+
+	useEffect(() => {
+		if (session.messages?.length > 0) {
+			setMessages(session.messages);
+		}
+		isInitialized.current = true;
+	}, [session.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	useEffect(() => {
+		if (!isInitialized.current) return;
+
+		if (
+			messages.length > 0 ||
+			session.messages.length === 0 ||
+			session.model !== model
+		) {
+			onSaveSession({
+				...session,
+				messages,
+				model,
+			});
+		}
+
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [messages, model]);
 
 	const [input, setInput] = useState("");
 	// 待发送的图片文件列表
@@ -241,13 +289,11 @@ export default function Chat() {
 		} catch {
 			// keep original
 		}
-		// eslint-disable-next-line react-hooks/set-state-in-effect
 		setToastMsg(msg);
 		clearError(); // 恢复为 ready 状态，可再次提问
 		const t = setTimeout(() => setToastMsg(null), 5000);
 		return () => clearTimeout(t);
 	}, [error]); // eslint-disable-line react-hooks/exhaustive-deps
-
 
 	// reasoning 计时：key = `${msgId}-${partIndex}`, value = { startMs, doneMs? }
 	const [reasoningTimers, setReasoningTimers] = useState<
@@ -307,7 +353,6 @@ export default function Chat() {
 
 	// 更新 reasoning 计时
 	useEffect(() => {
-		// eslint-disable-next-line react-hooks/set-state-in-effect
 		setReasoningTimers((prev) => {
 			const next = new Map(prev);
 			let changed = false;
@@ -331,7 +376,7 @@ export default function Chat() {
 
 	return (
 		<div
-			className="transition-colors duration-700 h-screen flex flex-col"
+			className="transition-colors duration-700 h-full flex flex-col relative"
 			style={{ backgroundColor: bgColor }}
 		>
 			{/* 图片灯笸 */}
@@ -787,6 +832,195 @@ export default function Chat() {
 						</div>
 					)}
 				</form>
+			</div>
+		</div>
+	);
+}
+
+export default function App() {
+	const [sessions, setSessions] = useState<ChatSession[]>(() => {
+		if (typeof window === "undefined") return [];
+		const saved = localStorage.getItem("chat_sessions");
+		if (saved) {
+			try {
+				return JSON.parse(saved);
+			} catch {
+				return [];
+			}
+		}
+		return [];
+	});
+
+	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+	const [isLoaded, setIsLoaded] = useState(false);
+
+	useEffect(() => {
+		const timer = setTimeout(() => setIsLoaded(true), 0);
+		return () => clearTimeout(timer);
+	}, []);
+
+	useEffect(() => {
+		if (isLoaded) {
+			localStorage.setItem("chat_sessions", JSON.stringify(sessions));
+		}
+	}, [sessions, isLoaded]);
+
+	const handleNewChat = () => {
+		const newSession: ChatSession = {
+			id: generateId(),
+			title: "新对话",
+			updatedAt: Date.now(),
+			messages: [],
+			model: "fast",
+		};
+		setSessions((prev) => [newSession, ...prev]);
+		setActiveSessionId(newSession.id);
+	};
+
+	const handleDeleteChat = (id: string, e: React.MouseEvent) => {
+		e.stopPropagation();
+		setSessions((prev) => {
+			const next = prev.filter((s) => s.id !== id);
+			if (activeSessionId === id) {
+				setActiveSessionId(next.length > 0 ? next[0].id : null);
+			}
+			return next;
+		});
+	};
+
+	if (!isLoaded)
+		return (
+			<div className="h-screen w-full bg-gray-50 flex items-center justify-center">
+				Loading...
+			</div>
+		);
+
+	const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
+
+	return (
+		<div className="flex h-screen w-full bg-white overflow-hidden">
+			{/* 侧边栏 */}
+			<div className="w-64 bg-gray-50 border-r border-gray-200 flex flex-col h-full shrink-0">
+				<div className="p-4 border-b border-gray-200">
+					<button
+						onClick={handleNewChat}
+						className="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors cursor-pointer text-sm font-medium shadow-sm"
+					>
+						+ 新对话
+					</button>
+				</div>
+				<div className="flex-1 overflow-y-auto">
+					{sessions.length === 0 ? (
+						<div className="p-4 text-center text-gray-400 text-sm">
+							暂无历史对话
+						</div>
+					) : (
+						[...sessions]
+							.sort((a, b) => b.updatedAt - a.updatedAt)
+							.map((s) => (
+								<div
+									key={s.id}
+									onClick={() => setActiveSessionId(s.id)}
+									className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center group transition-colors ${
+										activeSessionId === s.id
+											? "bg-blue-50/50 block border-l-4 border-l-blue-500"
+											: "hover:bg-gray-100/50 border-l-4 border-transparent"
+									}`}
+								>
+									<div className="flex-1 overflow-hidden pl-1">
+										<div className="text-sm font-medium text-gray-700 truncate">
+											{s.title}
+										</div>
+										<div className="text-xs text-gray-400 mt-1">
+											{new Date(s.updatedAt).toLocaleString(undefined, {
+												month: "numeric",
+												day: "numeric",
+												hour: "2-digit",
+												minute: "2-digit",
+											})}
+										</div>
+									</div>
+									<button
+										onClick={(e) => handleDeleteChat(s.id, e)}
+										className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 p-1 cursor-pointer transition-opacity"
+										title="删除对话"
+									>
+										✕
+									</button>
+								</div>
+							))
+					)}
+				</div>
+			</div>
+			{/* 主内容区 */}
+			<div className="flex-1 relative h-full flex flex-col bg-white">
+				{activeSession ? (
+					<>
+						<div className="h-14 flex justify-center items-center px-6 shrink-0 bg-white/90 backdrop-blur z-10 absolute top-0 w-full">
+							<h2
+								className="text-xl text-gray-800 truncate"
+								title={activeSession.title}
+							>
+								{activeSession.title}
+							</h2>
+						</div>
+						<ChatWindow
+							key={activeSession.id}
+							session={activeSession}
+							onSaveSession={(updated) => {
+								setSessions((prev) =>
+									prev.map((s) => {
+										if (s.id === updated.id) {
+											// 提取第一条用户消息的文字作为标题
+											let newTitle = s.title;
+											if (updated.messages.length > 0 && s.title === "新对话") {
+												const firstUserMsg = updated.messages.find(
+													(m) => m.role === "user",
+												);
+												if (firstUserMsg) {
+													const textParts = firstUserMsg.parts.filter(
+														(p: any) => p.type === "text",
+													);
+													const text = textParts
+														.map((p: any) => p.text)
+														.join(" ")
+														.trim();
+													if (text) {
+														newTitle =
+															text.substring(0, 15) +
+															(text.length > 15 ? "..." : "");
+													} else {
+														// 若只有图片
+														newTitle = "图片对话";
+													}
+												}
+											}
+
+											let newUpdatedAt = Math.max(updated.updatedAt, s.updatedAt);
+											if (updated.messages.length > s.messages.length) {
+												newUpdatedAt = Date.now();
+											}
+
+											return { ...updated, title: newTitle, updatedAt: newUpdatedAt };
+										}
+										return s;
+									}),
+								);
+							}}
+						/>
+					</>
+				) : (
+					<div className="h-full flex items-center justify-center flex-col gap-4 bg-gray-50">
+						<div className="text-gray-400">没有选中的对话</div>
+						<button
+							onClick={handleNewChat}
+							className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors cursor-pointer shadow-sm text-sm"
+						>
+							新建对话
+						</button>
+					</div>
+				)}
 			</div>
 		</div>
 	);
