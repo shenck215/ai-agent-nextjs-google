@@ -4,7 +4,7 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, FileUIPart } from "ai";
 import { useState, useCallback, useEffect, useRef } from "react";
 import MarkdownRenderer from "./components/markdown-renderer";
 import { PriceCard } from "./components/tools/price-card";
@@ -44,16 +44,150 @@ function CopyAllButton({ text }: { text: string }) {
 	);
 }
 
+const downloadBase64 = (base64String: string, customName = "ai_image") => {
+	// 提取后缀
+	const mimeType = base64String.match(/:(.*?);/)?.[1];
+	const extension = mimeType?.split("/")[1];
+	const fullFileName = `${customName}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+
+	// Base64 转 Blob
+	fetch(base64String)
+		.then((res) => res.blob())
+		.then((blob) => {
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = fullFileName; // 核心：在这里定义文件名
+			document.body.appendChild(a);
+			a.click();
+			window.URL.revokeObjectURL(url);
+			document.body.removeChild(a);
+		});
+};
+
+/** 图片灯箱：全屏预览 + 下载 */
+function ImageViewer({ src, onClose }: { src: string; onClose: () => void }) {
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, [onClose]);
+
+	return (
+		<div
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+			onClick={onClose}
+		>
+			<div
+				className="relative max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<img
+					src={src}
+					alt="预览图片"
+					className="max-w-full max-h-[80vh] rounded-xl shadow-2xl object-contain"
+				/>
+				<div className="flex gap-3">
+					<button
+						onClick={() => downloadBase64(src)}
+						className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors cursor-pointer"
+					>
+						↓ 下载图片
+					</button>
+					<button
+						onClick={onClose}
+						className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors cursor-pointer"
+					>
+						✕ 关闭
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function readFileAsDataURL(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(reader.result as string);
+		reader.onerror = reject;
+		reader.readAsDataURL(file);
+	});
+}
+
+/** 将 File[] 转换为 FileUIPart[] */
+async function filesToFileUIParts(files: File[]): Promise<FileUIPart[]> {
+	return Promise.all(
+		files.map(async (f) => ({
+			type: "file" as const,
+			mediaType: f.type || "image/png",
+			filename: f.name,
+			url: await readFileAsDataURL(f),
+		})),
+	);
+}
+
 export default function Chat() {
 	const [bgColor, setBgColor] = useState<string>("#ffffff");
-	const [model, setModel] = useState<"fast" | "thinking">("fast");
-	const { messages, sendMessage, status, stop, setMessages, error, clearError } = useChat({
+	const [model, setModel] = useState<"fast" | "thinking" | "image">("fast");
+	// 灯笸预览图片 URL
+	const [viewingImage, setViewingImage] = useState<string | null>(null);
+	const {
+		messages,
+		sendMessage,
+		status,
+		stop,
+		setMessages,
+		error,
+		clearError,
+	} = useChat({
 		transport: new DefaultChatTransport({
 			api: "/api/chat",
 		}),
 	});
 
 	const [input, setInput] = useState("");
+	// 待发送的图片文件列表
+	const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+	// 图片预览 URL（objectURL，用于 <img> 标签显示）
+	const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+	const fileInputRef = useRef<HTMLInputElement>(null);
+	// 输入区容器，用于拖拽检测
+	const inputAreaRef = useRef<HTMLDivElement>(null);
+	// 拖拽高亮状态
+	const [isDragging, setIsDragging] = useState(false);
+
+	/** 追加文件到待发送列表 */
+	const addFiles = useCallback((files: File[]) => {
+		const images = files.filter((f) => f.type.startsWith("image/"));
+		if (!images.length) return;
+		setSelectedFiles((prev) => [...prev, ...images]);
+		setPreviewUrls((prev) => [
+			...prev,
+			...images.map((f) => URL.createObjectURL(f)),
+		]);
+	}, []);
+
+	/** 移除某张图片 */
+	const removeFile = useCallback((index: number) => {
+		setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+		setPreviewUrls((prev) => {
+			URL.revokeObjectURL(prev[index]);
+			return prev.filter((_, i) => i !== index);
+		});
+	}, []);
+
+	/** 清空所有图片 */
+	const clearFiles = useCallback(() => {
+		setPreviewUrls((prev) => {
+			prev.forEach(URL.revokeObjectURL);
+			return [];
+		});
+		setSelectedFiles([]);
+	}, []);
+
 	// Toast 错误提示
 	const [toastMsg, setToastMsg] = useState<string | null>(null);
 
@@ -61,7 +195,7 @@ export default function Chat() {
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [editingText, setEditingText] = useState("");
 
-	/** 确认编辑：截断该消息之前的历史，重新发送 */
+	/** 确认编辑：截断该消息之前的历史，重新发送（编辑时不带图片） */
 	const handleEditSubmit = useCallback(
 		(msgIndex: number) => {
 			const text = editingText.trim();
@@ -73,6 +207,23 @@ export default function Chat() {
 		},
 		[editingText, messages, model, sendMessage, setMessages],
 	);
+
+	/** 粘贴事件：支持粘贴图片 */
+	useEffect(() => {
+		const handlePaste = (e: ClipboardEvent) => {
+			const items = Array.from(e.clipboardData?.items ?? []);
+			const imageFiles = items
+				.filter((item) => item.type.startsWith("image/"))
+				.map((item) => item.getAsFile())
+				.filter(Boolean) as File[];
+			if (imageFiles.length) {
+				e.preventDefault(); // 阻止浏览器把文件名插入输入框
+				addFiles(imageFiles);
+			}
+		};
+		window.addEventListener("paste", handlePaste);
+		return () => window.removeEventListener("paste", handlePaste);
+	}, [addFiles]);
 
 	// 监听错误，弹出 toast、清除 error 以恢复可提问
 	useEffect(() => {
@@ -101,6 +252,8 @@ export default function Chat() {
 	const [reasoningTimers, setReasoningTimers] = useState<
 		Map<string, { startMs: number; doneMs?: number }>
 	>(() => new Map());
+
+	console.log(messages);
 
 	useEffect(() => {
 		const container = scrollContainerRef.current;
@@ -167,9 +320,13 @@ export default function Chat() {
 
 	return (
 		<div
-			className="transition-colors duration-700 min-h-screen"
+			className="transition-colors duration-700 h-screen flex flex-col"
 			style={{ backgroundColor: bgColor }}
 		>
+			{/* 图片灯笸 */}
+			{viewingImage && (
+				<ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />
+			)}
 			{/* 错误 Toast */}
 			{toastMsg && (
 				<div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full bg-red-50 border border-red-200 text-red-700 rounded-xl shadow-lg px-4 py-3 flex items-start gap-3 animate-in slide-in-from-top-2">
@@ -186,7 +343,7 @@ export default function Chat() {
 
 			<div
 				ref={scrollContainerRef}
-				className="flex flex-col w-full max-w-3xl pt-16 pb-24 mx-auto stretch h-screen overflow-y-auto [scrollbar-width:none]"
+				className="flex flex-col w-full max-w-3xl pt-16 pb-6 mx-auto flex-1 overflow-y-auto [scrollbar-width:none]"
 			>
 				{messages.map((m, msgIndex) => (
 					<div key={m.id} className="whitespace-pre-wrap mb-4">
@@ -252,26 +409,44 @@ export default function Chat() {
 									</div>
 								) : (
 									// 静态模式：hover 时在文字后显示编辑按钮
-									<div className="flex items-start gap-2">
-										<div>
-											{m.parts
-												.filter((p) => p.type === "text")
-												.map((p) => (p as any).text as string)
-												.join("\n")}
-										</div>
-										<button
-											onClick={() => {
-												const text = m.parts
+									<div className="flex flex-col gap-2">
+										{/* 图片 parts */}
+										{m.parts.filter((p) => p.type === "file").length > 0 && (
+											<div className="flex flex-wrap gap-2 mb-1">
+												{m.parts
+													.filter((p) => p.type === "file")
+													.map((p, fi) => (
+														<img
+															key={fi}
+															src={(p as any).url}
+															alt={(p as any).filename ?? `image-${fi}`}
+															className="max-h-48 max-w-xs rounded-lg border border-gray-200 object-contain"
+														/>
+													))}
+											</div>
+										)}
+										{/* 文字 + 编辑按钮 */}
+										<div className="flex items-start gap-2">
+											<div>
+												{m.parts
 													.filter((p) => p.type === "text")
 													.map((p) => (p as any).text as string)
-													.join("\n");
-												setEditingId(m.id);
-												setEditingText(text);
-											}}
-											className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer bg-white"
-										>
-											编辑
-										</button>
+													.join("\n")}
+											</div>
+											<button
+												onClick={() => {
+													const text = m.parts
+														.filter((p) => p.type === "text")
+														.map((p) => (p as any).text as string)
+														.join("\n");
+													setEditingId(m.id);
+													setEditingText(text);
+												}}
+												className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer bg-white"
+											>
+												编辑
+											</button>
+										</div>
 									</div>
 								)}
 							</div>
@@ -334,6 +509,37 @@ export default function Chat() {
 									}
 									if (part.type === "text") {
 										return <MarkdownRenderer key={index} content={part.text} />;
+									} else if (part.type === "file") {
+										// AI 生成的图片（图片生成模式返回的 file part）
+										const imgUrl = (part as any).url as string;
+										return (
+											<div
+												key={index}
+												className="my-2 group relative inline-block"
+											>
+												<img
+													src={imgUrl}
+													alt="AI 生成的图片"
+													className="max-w-full max-h-96 rounded-xl border border-gray-200 shadow-sm cursor-zoom-in block"
+													onClick={() => setViewingImage(imgUrl)}
+												/>
+												{/* 悬浮操作按钮 */}
+												<div className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+													<button
+														onClick={() => setViewingImage(imgUrl)}
+														className="px-2 py-1 rounded bg-black/60 text-white text-xs cursor-pointer hover:bg-black/80 transition-colors"
+													>
+														⛶ 放大
+													</button>
+													<button
+														onClick={() => downloadBase64(imgUrl)}
+														className="px-2 py-1 rounded bg-black/60 text-white text-xs cursor-pointer hover:bg-black/80 transition-colors"
+													>
+														↓ 下载
+													</button>
+												</div>
+											</div>
+										);
 									} else if (part.type.startsWith("tool-")) {
 										const toolPart = part as any;
 										const toolName = toolPart.type.replace("tool-", "");
@@ -428,25 +634,112 @@ export default function Chat() {
 
 				{/* 底部锚点 */}
 				<div ref={bottomRef} />
+			</div>
 
-				{/* 输入表单 */}
-				<form
-					onSubmit={(e) => {
-						e.preventDefault();
-						if (input.trim() && status === "ready") {
-							sendMessage({ text: input }, { body: { model } });
-							setInput("");
-						}
+			{/* 输入表单区域 */}
+			<div
+				ref={inputAreaRef}
+				className={`w-full max-w-3xl mx-auto py-4 flex flex-col gap-2 border-t border-gray-200 transition-all ${
+					isDragging ? "opacity-80" : ""
+				}`}
+				onDragOver={(e) => {
+					e.preventDefault();
+					setIsDragging(true);
+				}}
+				onDragLeave={() => setIsDragging(false)}
+				onDrop={(e) => {
+					e.preventDefault();
+					setIsDragging(false);
+					addFiles(Array.from(e.dataTransfer.files));
+				}}
+			>
+				{/* 图片预览条 */}
+				{previewUrls.length > 0 && (
+					<div className="flex gap-2 flex-wrap bg-white rounded-xl shadow-xl border border-gray-200 p-2">
+						{previewUrls.map((url, i) => (
+							<div key={i} className="relative group">
+								<img
+									src={url}
+									alt={selectedFiles[i]?.name ?? `image-${i}`}
+									className="h-16 w-16 object-cover rounded-lg border border-gray-200"
+								/>
+								<button
+									type="button"
+									onClick={() => removeFile(i)}
+									className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer leading-none"
+								>
+									✕
+								</button>
+							</div>
+						))}
+						{isDragging && (
+							<div className="h-16 w-16 rounded-lg border-2 border-dashed border-blue-400 flex items-center justify-center text-blue-400 text-xl">
+								+
+							</div>
+						)}
+					</div>
+				)}
+				{/* 拖拽放置提示（无预览图时） */}
+				{isDragging && previewUrls.length === 0 && (
+					<div className="flex items-center justify-center h-16 rounded-xl border-2 border-dashed border-blue-400 bg-blue-50 text-blue-500 text-sm">
+						📷 松开鼠标上传图片
+					</div>
+				)}
+				{/* 隐藏的文件选择器 */}
+				<input
+					ref={fileInputRef}
+					type="file"
+					accept="image/*"
+					multiple
+					className="hidden"
+					onChange={(e) => {
+						addFiles(Array.from(e.target.files ?? []));
+						e.target.value = "";
 					}}
-					className="fixed bottom-0 w-full max-w-3xl mb-8 flex gap-2"
+				/>
+				<form
+					onSubmit={async (e) => {
+						e.preventDefault();
+						const hasText = !!input.trim();
+						const hasFiles = selectedFiles.length > 0;
+						if ((!hasText && !hasFiles) || status !== "ready") return;
+						const filesParts = hasFiles
+							? await filesToFileUIParts(selectedFiles)
+							: [];
+						// 发送前重置滚动状态，确保发送后自动滚到底部
+						isUserScrolled.current = false;
+						if (hasText && hasFiles) {
+							sendMessage(
+								{ text: input, files: filesParts },
+								{ body: { model } },
+							);
+						} else if (hasText) {
+							sendMessage({ text: input }, { body: { model } });
+						} else {
+							sendMessage({ files: filesParts }, { body: { model } });
+						}
+						setInput("");
+						clearFiles();
+					}}
+					className="flex gap-2"
 				>
+					{/* 上传图片按钮 */}
+					<button
+						type="button"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={status !== "ready"}
+						className="px-3 py-2 rounded border border-gray-300 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors cursor-pointer shadow-xl text-base disabled:opacity-40 disabled:cursor-not-allowed"
+						title="上传图片（也支持粘贴 / 拖拽）"
+					>
+						📎
+					</button>
 					<input
 						className="flex-1 p-2 border border-gray-300 rounded shadow-xl bg-white"
 						value={input}
 						placeholder={
 							status !== "ready"
 								? "AI 正在回答中，请等待或点击停止…"
-								: "和 Agent 聊聊..."
+								: "和 Agent 聊聊... （支持粘贴或拖拽图片）"
 						}
 						onChange={(e) => setInput(e.target.value)}
 						disabled={status !== "ready"}
@@ -461,21 +754,21 @@ export default function Chat() {
 						</button>
 					) : (
 						<div className="flex gap-2">
-							{/* 模型切换 */}
-							<button
-								type="button"
-								onClick={() => setModel((m) => (m === "fast" ? "thinking" : "fast"))}
-								className={`px-3 py-2 rounded text-xs font-medium shadow-xl whitespace-nowrap transition-colors cursor-pointer border ${
-									model === "thinking"
-										? "bg-violet-600 text-white border-violet-600 hover:bg-violet-700"
-										: "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
-								}`}
+							{/* 模型切换下拉 */}
+							<select
+								value={model}
+								onChange={(e) =>
+									setModel(e.target.value as "fast" | "thinking" | "image")
+								}
+								className="rounded shadow-xl border border-gray-300 bg-white text-gray-600 cursor-pointer transition-colors hover:bg-gray-50 focus:outline-none"
 							>
-								{model === "thinking" ? "💭 思考" : "⚡ 快速"}
-							</button>
+								<option value="fast">⚡ 快速</option>
+								<option value="thinking">💭 思考</option>
+								<option value="image">🖼️ 生图</option>
+							</select>
 							<button
 								type="submit"
-								disabled={!input.trim()}
+								disabled={!input.trim() && selectedFiles.length === 0}
 								className="px-4 py-2 rounded bg-blue-500 text-white text-sm hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-xl whitespace-nowrap"
 							>
 								发送

@@ -3,6 +3,7 @@ lockfileVersion: 5.4
 specifiers:
   '@ai-sdk/google': 3.0.31
   '@ai-sdk/react': 3.0.101
+  '@tailwindcss/forms': ^0.5.11
   '@tailwindcss/postcss': ^4
   '@types/node': ^20
   '@types/react': ^19
@@ -35,6 +36,7 @@ dependencies:
   zod: 4.3.6
 
 devDependencies:
+  '@tailwindcss/forms': 0.5.11_tailwindcss@4.1.18
   '@tailwindcss/postcss': 4.1.18
   '@types/node': 20.19.30
   '@types/react': 19.2.10
@@ -805,6 +807,15 @@ packages:
     dependencies:
       tslib: 2.8.1
     dev: false
+
+  /@tailwindcss/forms/0.5.11_tailwindcss@4.1.18:
+    resolution: {integrity: sha512-h9wegbZDPurxG22xZSoWtdzc41/OlNEUQERNqI/0fOwa2aVlWGu7C35E/x6LDyD3lgtztFSSjKZyuVM0hxhbgA==}
+    peerDependencies:
+      tailwindcss: '>=3.0.0 || >= 3.0.0-alpha.1 || >= 4.0.0-alpha.20 || >= 4.0.0-beta.1'
+    dependencies:
+      mini-svg-data-uri: 1.4.4
+      tailwindcss: 4.1.18
+    dev: true
 
   /@tailwindcss/node/4.1.18:
     resolution: {integrity: sha512-DoR7U1P7iYhw16qJ49fgXUlry1t4CpXeErJHnQ44JgTSKMaZUdf17cfn5mHchfJ4KRBZRFA/Coo+MUF5+gOaCQ==}
@@ -3527,6 +3538,11 @@ packages:
     dependencies:
       braces: 3.0.3
       picomatch: 2.3.1
+    dev: true
+
+  /mini-svg-data-uri/1.4.4:
+    resolution: {integrity: sha512-r9deDe9p5FJUPZAk3A59wGH7Ii9YrjjWw0jmw/liSbHl2CHiyXj6FcDXDu2K3TjVAXqiJdaw3xxwlZZr9E6nHg==}
+    hasBin: true
     dev: true
 
   /minimatch/3.1.2:

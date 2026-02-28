@@ -44,7 +44,21 @@ export async function POST(req: Request) {
 		await req.json();
 
 	const isThinking = model === "thinking";
-	const modelId = isThinking ? "gemini-3-pro-preview" : "gemini-3-flash-preview";
+	const isImage = model === "image";
+	const modelId = isImage
+		? "gemini-3-pro-image-preview"
+		: isThinking
+			? "gemini-3-pro-preview"
+			: "gemini-3-flash-preview";
+
+	// 如果切换到了非 Thinking 模型，过滤掉历史中的推理部分
+	const filteredMessages =
+		model === "fast"
+			? messages.map((m) => ({
+					...m,
+					parts: m.parts.filter((p) => p.type !== "reasoning"),
+				}))
+			: messages;
 
 	/**
 	 * 2. 调用 AI 模型生成回复
@@ -67,7 +81,7 @@ export async function POST(req: Request) {
 		 * convertToModelMessages 将前端的 UIMessage 格式
 		 * 转换为 AI 模型能理解的格式
 		 */
-		messages: await convertToModelMessages(messages),
+		messages: await convertToModelMessages(filteredMessages),
 
 		// 思考模式才开启思考功能
 		...(isThinking && {
@@ -77,64 +91,50 @@ export async function POST(req: Request) {
 				},
 			},
 		}),
+		// 图片生成模式：开启 IMAGE 输出
+		...(isImage && {
+			providerOptions: {
+				google: {
+					responseModalities: ["TEXT", "IMAGE"] as ("TEXT" | "IMAGE")[],
+				},
+			},
+		}),
 
 		/**
-		 * 工具库定义 - AI Agent 的核心！
-		 *
-		 * 什么是工具（Tool）？
-		 * - 工具是 AI 可以调用的函数
-		 * - 当 AI 需要获取实时信息或执行操作时，它会选择合适的工具
-		 * - AI 会自动决定何时调用工具、传入什么参数
-		 *
-		 * 工作流程：
-		 * 1. 用户问："杭州天气怎么样？"
-		 * 2. AI 分析后决定调用 getWeather 工具
-		 * 3. AI 自动传入参数 { city: "杭州" }
-		 * 4. 工具执行并返回结果 { temperature: 25, condition: "Sunny" }
-		 * 5. AI 基于结果生成自然语言回复："今天杭州是晴天，气温25℃"
+		 * 工具库定义（图片生成模式下不使用工具）
 		 */
-		tools: {
-			// 定义一个获取房价的工具
-			getHousingPrice: tool({
-				description: "获取指定区域的平均房价",
-				inputSchema: z.object({
-					location: z.string().describe("区域名称，如：西湖区、未来科技城"),
+		...(!isImage && {
+			tools: {
+				// 定义一个获取房价的工具
+				getHousingPrice: tool({
+					description: "获取指定区域的平均房价",
+					inputSchema: z.object({
+						location: z.string().describe("区域名称，如：西湖区、未来科技城"),
+					}),
+					execute: async ({ location }) => {
+						// 这里对接真实的业务接口
+						console.log(`正在查询 ${location} 的数据...`);
+						// 模拟返回数据
+						return { price: 45000, unit: "CNY/sqm", trend: "stable" };
+					},
 				}),
-				execute: async ({ location }) => {
-					// 这里对接真实的业务接口
-					console.log(`正在查询 ${location} 的数据...`);
-					// 模拟返回数据
-					return { price: 45000, unit: "CNY/sqm", trend: "stable" };
-				},
-			}),
-			updateTheme: tool({
-				description:
-					"修改应用界面主题颜色，可以指定具体的颜色描述或十六进制色值",
-				inputSchema: z.object({
-					// 使用 string 替代 enum，并给出详细的描述引导 AI
-					color: z
-						.string()
-						.describe("十六进制颜色值 (如 #FF5733) 或 CSS 标准颜色名称"),
-					reason: z.string().describe("为什么要选择这个颜色的简短说明"),
+				updateTheme: tool({
+					description:
+						"修改应用界面主题颜色，可以指定具体的颜色描述或十六进制色值",
+					inputSchema: z.object({
+						// 使用 string 替代 enum，并给出详细的描述引导 AI
+						color: z
+							.string()
+							.describe("十六进制颜色值 (如 #FF5733) 或 CSS 标准颜色名称"),
+						reason: z.string().describe("为什么要选择这个颜色的简短说明"),
+					}),
+					execute: async ({ color, reason }) => {
+						// 你可以在这里做一些色值校验，或者直接返回
+						return { success: true, activeColor: color, reason };
+					},
 				}),
-				execute: async ({ color, reason }) => {
-					// 你可以在这里做一些色值校验，或者直接返回
-					return { success: true, activeColor: color, reason };
-				},
-			}),
-
-			/**
-			 * 你可以在这里添加更多工具！
-			 *
-			 * 例如：
-			 * - searchDatabase: 搜索数据库
-			 * - sendEmail: 发送邮件
-			 * - calculatePrice: 计算价格
-			 * - bookAppointment: 预约服务
-			 *
-			 * AI 会根据用户的需求自动选择和组合使用这些工具
-			 */
-		},
+			},
+		}),
 	});
 
 	/**
