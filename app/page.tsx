@@ -130,6 +130,10 @@ async function filesToFileUIParts(files: File[]): Promise<FileUIPart[]> {
 }
 
 export default function Chat() {
+	// 自动滚动 Refs (Move to top to fix React Compiler issue)
+	const scrollContainerRef = useRef<HTMLDivElement>(null);
+	const bottomRef = useRef<HTMLDivElement>(null);
+	const isUserScrolled = useRef(false);
 	const [bgColor, setBgColor] = useState<string>("#ffffff");
 	const [model, setModel] = useState<"fast" | "thinking" | "image">("fast");
 	// 灯笸预览图片 URL
@@ -203,6 +207,7 @@ export default function Chat() {
 			setMessages(messages.slice(0, msgIndex));
 			setEditingId(null);
 			setEditingText("");
+			isUserScrolled.current = false; // 重发时同样重置向下滚动
 			setTimeout(() => sendMessage({ text }, { body: { model } }), 0);
 		},
 		[editingText, messages, model, sendMessage, setMessages],
@@ -243,10 +248,6 @@ export default function Chat() {
 		return () => clearTimeout(t);
 	}, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
-	// 自动滚动
-	const scrollContainerRef = useRef<HTMLDivElement>(null);
-	const bottomRef = useRef<HTMLDivElement>(null);
-	const isUserScrolled = useRef(false);
 
 	// reasoning 计时：key = `${msgId}-${partIndex}`, value = { startMs, doneMs? }
 	const [reasoningTimers, setReasoningTimers] = useState<
@@ -258,9 +259,19 @@ export default function Chat() {
 	useEffect(() => {
 		const container = scrollContainerRef.current;
 		if (!container) return;
+		let lastScrollTop = container.scrollTop;
 		const handleScroll = () => {
 			const { scrollTop, scrollHeight, clientHeight } = container;
-			isUserScrolled.current = scrollHeight - scrollTop - clientHeight > 50;
+			const distanceToBottom = scrollHeight - scrollTop - clientHeight;
+
+			if (distanceToBottom <= 50) {
+				// 触底时恢复自动滚动
+				isUserScrolled.current = false;
+			} else if (lastScrollTop - scrollTop > 5) {
+				// 只有当用户确实向上回滚 (>5px) 时才暂停自动滚动，避免大段文本导致 scrollHeight 突变时误判
+				isUserScrolled.current = true;
+			}
+			lastScrollTop = scrollTop;
 		};
 		container.addEventListener("scroll", handleScroll, { passive: true });
 		return () => container.removeEventListener("scroll", handleScroll);
@@ -270,7 +281,7 @@ export default function Chat() {
 		if (!isUserScrolled.current) {
 			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 		}
-	}, [messages]);
+	}, [messages, status]); // 加上 status，确保发消息变成 submitted 时立刻滚动到底部的转圈占位符
 
 	useEffect(() => {
 		if (status === "ready") {

@@ -91,6 +91,7 @@ export async function POST(req: Request) {
 				},
 			},
 		}),
+
 		// 图片生成模式：开启 IMAGE 输出
 		...(isImage && {
 			providerOptions: {
