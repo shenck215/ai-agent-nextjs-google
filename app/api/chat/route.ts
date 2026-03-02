@@ -51,14 +51,27 @@ export async function POST(req: Request) {
 			? "gemini-3-pro-preview"
 			: "gemini-3-flash-preview";
 
-	// 如果切换到了非 Thinking 模型，过滤掉历史中的推理部分
-	const filteredMessages =
-		model === "fast"
-			? messages.map((m) => ({
-					...m,
-					parts: m.parts.filter((p) => p.type !== "reasoning"),
-				}))
-			: messages;
+	// 为了避免把助手之前生成的图片（file part）又发回给大模型导致 thought_signature 报错
+	// 我们过滤掉 assistant 消息里那些不支持传回历史的特殊 Part (比如 file / step-start 发乱)
+	const filteredMessages = messages.map((m) => {
+		if (m.role === "assistant" && m.parts) {
+			const newParts = m.parts.filter(
+				(p) =>
+					p.type === "text" ||
+					p.type.startsWith("tool-") ||
+					(isThinking && p.type === "reasoning"),
+			);
+
+			// 如果过滤完发现没有任何内容（例如那一回合 AI 只生成了一张图片），
+			// 我们给它塞一段文本占位，防止 Gemini 因为 message 内容为空而报错。
+			if (newParts.length === 0) {
+				newParts.push({ type: "text", text: "[已生成了一张图片]" } as any);
+			}
+
+			return { ...m, parts: newParts };
+		}
+		return m;
+	});
 
 	/**
 	 * 2. 调用 AI 模型生成回复
