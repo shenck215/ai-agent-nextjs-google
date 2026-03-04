@@ -49,7 +49,7 @@ function CopyAllButton({ text }: { text: string }) {
 	return (
 		<button
 			onClick={handleCopy}
-			className="mt-2 px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-500 hover:bg-gray-100 transition-colors cursor-pointer"
+			className="mt-2 px-2 py-0.5 text-xs rounded border border-orange-500 text-orange-500 hover:bg-orange-50 transition-colors cursor-pointer"
 		>
 			{copied ? "✓ 已复制" : "复制回答"}
 		</button>
@@ -152,6 +152,7 @@ function ChatWindow({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const isUserScrolled = useRef(false);
+	const stoppedByUser = useRef(false);
 	const [bgColor, setBgColor] = useState<string>("#ffffff");
 	const [model, setModel] = useState<"fast" | "thinking" | "image">(
 		session.model || "fast",
@@ -199,7 +200,7 @@ function ChatWindow({
 
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [messages, model]);
-
+	console.log(messages);
 	const [input, setInput] = useState("");
 	// 待发送的图片文件列表
 	const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -332,8 +333,34 @@ function ChatWindow({
 	useEffect(() => {
 		if (status === "ready") {
 			isUserScrolled.current = false;
+			if (stoppedByUser.current) {
+				stoppedByUser.current = false;
+				setMessages((prev) => {
+					if (!prev.length) return prev;
+					const last = prev[prev.length - 1];
+					// 最后一条是 assistant：在已有内容后追加停止提示
+					if (last.role === "assistant") {
+						const updated = {
+							...last,
+							parts: [...last.parts, { type: "stopped-notice" as any }],
+						};
+						return [...prev.slice(0, -1), updated];
+					}
+					// 最后一条是 user（submitted 阶段就停止，AI 尚未回复）：插入新 assistant 消息
+					return [
+						...prev,
+						{
+							id: generateId(),
+							role: "assistant" as const,
+							content: "",
+							parts: [{ type: "stopped-notice" as any }],
+							createdAt: new Date(),
+						},
+					];
+				});
+			}
 		}
-	}, [status]);
+	}, [status, setMessages]);
 
 	useEffect(() => {
 		const lastMessage = messages[messages.length - 1];
@@ -401,42 +428,41 @@ function ChatWindow({
 				ref={scrollContainerRef}
 				className="flex flex-col w-full max-w-3xl pt-16 pb-6 mx-auto flex-1 overflow-y-auto [scrollbar-width:none]"
 			>
-				{messages.map((m, msgIndex) => (
-					<div key={m.id} className="whitespace-pre-wrap mb-4">
-						{/* 标题行 */}
-						<div className="font-bold mb-1 flex items-center gap-2">
-							{m.role === "user" ? (
-								"User:"
-							) : (
-								<>
-									<span>AI:</span>
-									{/* 最后一条消息且正在流式输出时，显示彩色旋转圆圈 */}
+				{messages.map((m, msgIndex) => {
+					const isUser = m.role === "user";
+					return (
+					<div key={m.id} className={`whitespace-pre-wrap mb-4 flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
+						<div className={`flex flex-col gap-1 w-full max-w-[85%] ${isUser ? "items-end" : "items-start"}`}>
+							{/* 标题行，仅对 AI 显示 */}
+							{!isUser && (
+								<div className="font-bold flex items-center gap-2 mb-1">
+									<span className="font-extrabold text-orange-500">噜噜:</span>
+									{/* 最后一条消息且正在流式输出时，显示暖色旋转圆圈 */}
 									{msgIndex === messages.length - 1 &&
 										(status === "streaming" || status === "submitted") && (
 											<span
 												className="inline-block w-4 h-4 rounded-full animate-spin"
 												style={{
 													background:
-														"conic-gradient(from 0deg, #6366f1, #8b5cf6, #ec4899, #f59e0b, #10b981, #6366f1)",
+														"conic-gradient(from 0deg, #F97316, #FBBF24, #FDE68A, #FCA5A5, #F97316)",
 													mask: "radial-gradient(farthest-side, transparent 55%, #000 56%)",
 													WebkitMask:
 														"radial-gradient(farthest-side, transparent 55%, #000 56%)",
 												}}
 											/>
 										)}
-								</>
+								</div>
 							)}
-						</div>
 
-						{/* 用户消息：支持内联编辑 */}
-						{m.role === "user" && (
-							<div className="ml-4 group relative">
+						{/* 用户消息内容：气泡样式 */}
+						{isUser && (
+							<div className="group relative flex justify-end w-full">
 								{editingId === m.id ? (
 									// 编辑模式
-									<div className="flex flex-col gap-2">
+									<div className="flex flex-col gap-2 items-end w-full max-w-lg">
 										<textarea
 											autoFocus
-											className="w-full p-2 border border-blue-400 rounded text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+											className="w-full min-w-[200px] p-2 border border-orange-400 rounded-xl text-sm resize-none focus:outline-none focus:ring-1 focus:ring-orange-400 text-gray-800"
 											rows={3}
 											value={editingText}
 											onChange={(e) => setEditingText(e.target.value)}
@@ -450,25 +476,25 @@ function ChatWindow({
 										/>
 										<div className="flex gap-2">
 											<button
-												onClick={() => handleEditSubmit(msgIndex)}
-												className="px-3 py-1 text-xs rounded bg-blue-500 text-white hover:bg-blue-600 transition-colors cursor-pointer"
-											>
-												重新发送
-											</button>
-											<button
 												onClick={() => setEditingId(null)}
-												className="px-3 py-1 text-xs rounded border border-gray-300 text-gray-500 hover:bg-gray-100 transition-colors cursor-pointer"
+												className="px-3 py-1 text-xs rounded-lg border border-orange-500 text-orange-600 hover:bg-orange-50 transition-colors cursor-pointer"
 											>
 												取消
+											</button>
+											<button
+												onClick={() => handleEditSubmit(msgIndex)}
+												className="px-3 py-1 text-xs rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors cursor-pointer"
+											>
+												重新发送
 											</button>
 										</div>
 									</div>
 								) : (
-									// 静态模式：hover 时在文字后显示编辑按钮
-									<div className="flex flex-col gap-2">
+									// 静态模式：气泡
+									<div className="flex flex-col gap-2 items-end">
 										{/* 图片 parts */}
 										{m.parts.filter((p) => p.type === "file").length > 0 && (
-											<div className="flex flex-wrap gap-2 mb-1">
+											<div className="flex flex-wrap gap-2 justify-end mb-1">
 												{m.parts
 													.filter((p) => p.type === "file")
 													.map((p, fi) => (
@@ -476,19 +502,13 @@ function ChatWindow({
 															key={fi}
 															src={(p as any).url}
 															alt={(p as any).filename ?? `image-${fi}`}
-															className="max-h-48 max-w-xs rounded-lg border border-gray-200 object-contain"
+															className="max-h-48 max-w-xs rounded-xl border border-gray-200 object-contain shadow-sm"
 														/>
 													))}
 											</div>
 										)}
 										{/* 文字 + 编辑按钮 */}
-										<div className="flex items-start gap-2">
-											<div>
-												{m.parts
-													.filter((p) => p.type === "text")
-													.map((p) => (p as any).text as string)
-													.join("\n")}
-											</div>
+										<div className="flex items-center gap-2 group/bubble">
 											<button
 												onClick={() => {
 													const text = m.parts
@@ -498,10 +518,17 @@ function ChatWindow({
 													setEditingId(m.id);
 													setEditingText(text);
 												}}
-												className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer bg-white"
+												className="shrink-0 opacity-0 group-hover/bubble:opacity-100 transition-opacity px-2 py-1 flex items-center justify-center text-xs rounded-full bg-white border border-orange-500 text-orange-500 hover:bg-orange-50 cursor-pointer shadow-sm"
+												title="修改"
 											>
-												编辑
+												✎
 											</button>
+											<div className="bg-orange-500 text-white px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm inline-block max-w-[100%] break-words">
+												{m.parts
+													.filter((p) => p.type === "text")
+													.map((p) => (p as any).text as string)
+													.join("\n")}
+											</div>
 										</div>
 									</div>
 								)}
@@ -509,7 +536,7 @@ function ChatWindow({
 						)}
 
 						{/* AI 消息内容区域 */}
-						{m.role === "assistant" && (
+						{!isUser && (
 							<div className="ml-4">
 								{m.parts.map((part, index) => {
 									// 思考过程（reasoning）：可折叠展示
@@ -561,6 +588,17 @@ function ChatWindow({
 													{part.text}
 												</div>
 											</details>
+										);
+									}
+									if ((part as any).type === "stopped-notice") {
+										return (
+											<p
+												key={index}
+												className="mt-3 text-xs italic text-orange-500/80 flex items-center gap-1.5 select-none"
+											>
+												<span>⏹</span>
+												<span>你已让系统停止这条回答</span>
+											</p>
 										);
 									}
 									if (part.type === "text") {
@@ -619,6 +657,64 @@ function ChatWindow({
 										// 状态 B：执行结果已返回
 										// 3. 核心分发逻辑
 										switch (toolName) {
+											case "searchKnowledgeBase":
+												const result = toolPart.output;
+												return (
+													<div
+														key={index}
+														className="my-2 p-3 bg-violet-50/50 border border-violet-100 rounded-xl shadow-sm"
+													>
+														{/* 1. 状态头部 */}
+														<div className="flex items-center justify-between mb-2">
+															<div className="flex items-center gap-2 text-violet-600 font-bold text-xs">
+																<span>🔍 知识库检索完成</span>
+																{result.foundInfo && (
+																	<span className="bg-violet-100 px-1.5 py-0.5 rounded text-[10px]">
+																		命中 {result.sources?.length} 条
+																	</span>
+																)}
+															</div>
+														</div>
+
+														{/* 2. 来源标签展示 */}
+														{result.foundInfo && result.sources && (
+															<div className="flex flex-wrap gap-2 mb-3">
+																{result.sources.map((src: any, si: number) => (
+																	<div
+																		key={si}
+																		className="px-2 py-1 bg-white border border-violet-200 rounded text-[10px] text-gray-500 flex items-center gap-1"
+																	>
+																		📄 {src.source}{" "}
+																		<span className="text-gray-300 font-normal">
+																			| {src.similarity}%
+																		</span>
+																	</div>
+																))}
+															</div>
+														)}
+
+														{/* 3. 核心：检索到的内容展示（折叠模式） */}
+														{result.foundInfo ? (
+															<details className="text-xs group">
+																<summary className="cursor-pointer text-violet-500 hover:text-violet-700 select-none flex items-center gap-1 transition-colors">
+																	<span className="group-open:rotate-90 transition-transform">
+																		▶
+																	</span>
+																	查看检索到的原文内容
+																</summary>
+																<div className="mt-2 p-2 bg-white/80 rounded-lg border border-violet-100 text-gray-600 leading-relaxed max-h-60 overflow-y-auto [scrollbar-width:thin]">
+																	{/* 使用你现有的 MarkdownRenderer 渲染知识库内容 */}
+																	<MarkdownRenderer content={result.content} />
+																</div>
+															</details>
+														) : (
+															<div className="text-xs text-gray-400 italic">
+																未能从知识库中找到相关匹配信息
+															</div>
+														)}
+													</div>
+												);
+
 											case "getHousingPrice":
 												return (
 													<PriceCard
@@ -657,7 +753,7 @@ function ChatWindow({
 						)}
 
 						{/* AI 消息底部的「复制回答」按钮：回答完成后才显示 */}
-						{m.role === "assistant" &&
+						{!isUser &&
 							!(msgIndex === messages.length - 1 && status !== "ready") && (
 								<CopyAllButton
 									text={m.parts
@@ -666,19 +762,21 @@ function ChatWindow({
 										.join("\n")}
 								/>
 							)}
+						</div>
 					</div>
-				))}
+				);
+				})}
 
 				{/* submitted 时 AI 消息还未到达，渲染占位标题行 */}
 				{status === "submitted" && (
 					<div className="whitespace-pre-wrap mb-4">
 						<div className="font-bold mb-1 flex items-center gap-2">
-							<span>AI:</span>
+							<span className="font-extrabold text-orange-500">噜噜:</span>
 							<span
 								className="inline-block w-4 h-4 rounded-full animate-spin"
 								style={{
 									background:
-										"conic-gradient(from 0deg, #6366f1, #8b5cf6, #ec4899, #f59e0b, #10b981, #6366f1)",
+										"conic-gradient(from 0deg, #F97316, #FBBF24, #FDE68A, #FCA5A5, #F97316)",
 									mask: "radial-gradient(farthest-side, transparent 55%, #000 56%)",
 									WebkitMask:
 										"radial-gradient(farthest-side, transparent 55%, #000 56%)",
@@ -790,12 +888,12 @@ function ChatWindow({
 						📎
 					</button>
 					<input
-						className="flex-1 p-2 border border-gray-300 rounded shadow-xl bg-white"
+						className="flex-1 p-2 border border-gray-300 rounded shadow-xl bg-white focus:ring-orange-500 focus:border-transparent"
 						value={input}
 						placeholder={
 							status !== "ready"
-								? "AI 正在回答中，请等待或点击停止…"
-								: "和 Agent 聊聊... （支持粘贴或拖拽图片）"
+								? "噜噜正在思考中，请稍等或点击停止…"
+								: "和噜噜聊聊吧～（支持粘贴或拖拽图片）"
 						}
 						onChange={(e) => setInput(e.target.value)}
 						disabled={status !== "ready"}
@@ -803,7 +901,10 @@ function ChatWindow({
 					{status !== "ready" ? (
 						<button
 							type="button"
-							onClick={stop}
+							onClick={() => {
+								stoppedByUser.current = true;
+								stop();
+							}}
 							className="px-4 py-2 rounded bg-red-500 text-white text-sm hover:bg-red-600 transition-colors cursor-pointer shadow-xl whitespace-nowrap"
 						>
 							⏹ 停止
@@ -816,7 +917,7 @@ function ChatWindow({
 								onChange={(e) =>
 									setModel(e.target.value as "fast" | "thinking" | "image")
 								}
-								className="rounded shadow-xl border border-gray-300 bg-white text-gray-600 cursor-pointer transition-colors hover:bg-gray-50 focus:outline-none"
+								className="rounded shadow-xl border border-gray-300 bg-white text-gray-600 cursor-pointer transition-colors hover:bg-gray-50 focus:outline-none focus:ring-orange-500 focus:border-transparent"
 							>
 								<option value="fast">⚡ 快速</option>
 								<option value="thinking">💭 思考</option>
@@ -825,7 +926,7 @@ function ChatWindow({
 							<button
 								type="submit"
 								disabled={!input.trim() && selectedFiles.length === 0}
-								className="px-4 py-2 rounded bg-blue-500 text-white text-sm hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-xl whitespace-nowrap"
+								className="px-4 py-2 rounded bg-orange-500 text-white text-sm hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-lg whitespace-nowrap font-bold"
 							>
 								发送
 							</button>
@@ -862,7 +963,35 @@ export default function App() {
 
 	useEffect(() => {
 		if (isLoaded) {
-			localStorage.setItem("chat_sessions", JSON.stringify(sessions));
+			try {
+				// 清理发送和接收的图片 base64 数据以防 localStorage 超出配额
+				const sanitizedSessions = sessions.map((session) => ({
+					...session,
+					messages: session.messages.map((msg) => ({
+						...msg,
+						parts: msg.parts
+							? msg.parts.map((p: any) => {
+									if (
+										p.type === "file" &&
+										typeof p.url === "string" &&
+										p.url.startsWith("data:")
+									) {
+										// 为了省空间，不把超大的 Base64 存到 localstorage 里
+										// 这样会导致刷新后图片丢失，但在纯前端存储的情况下这是防止爆掉必做的取舍
+										return { ...p, url: "" };
+									}
+									return p;
+								})
+							: [],
+					})),
+				}));
+				localStorage.setItem(
+					"chat_sessions",
+					JSON.stringify(sanitizedSessions),
+				);
+			} catch (e) {
+				console.error("Failed to save to localStorage:", e);
+			}
 		}
 	}, [sessions, isLoaded]);
 
@@ -891,8 +1020,13 @@ export default function App() {
 
 	if (!isLoaded)
 		return (
-			<div className="h-screen w-full bg-gray-50 flex items-center justify-center">
-				Loading...
+			<div
+				className="h-screen w-full flex items-center justify-center"
+				style={{ background: "#FFFBF0" }}
+			>
+				<span className="text-orange-500 text-2xl animate-pulse">
+					噜噜来啦…
+				</span>
 			</div>
 		);
 
@@ -905,15 +1039,15 @@ export default function App() {
 				<div className="p-4 border-b border-gray-200">
 					<button
 						onClick={handleNewChat}
-						className="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors cursor-pointer text-sm font-medium shadow-sm"
+						className="w-full py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors cursor-pointer text-sm font-medium shadow-sm"
 					>
 						+ 新对话
 					</button>
 				</div>
 				<div className="flex-1 overflow-y-auto">
 					{sessions.length === 0 ? (
-						<div className="p-4 text-center text-gray-400 text-sm">
-							暂无历史对话
+						<div className="p-4 text-center text-orange-300 text-sm mt-4">
+							还没有历史对话，和噜噜聊聊吧！
 						</div>
 					) : (
 						[...sessions]
@@ -922,10 +1056,10 @@ export default function App() {
 								<div
 									key={s.id}
 									onClick={() => setActiveSessionId(s.id)}
-									className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center group transition-colors ${
+									className={`p-3 cursor-pointer flex justify-between items-center group transition-colors ${
 										activeSessionId === s.id
-											? "bg-blue-50/50 block border-l-4 border-l-blue-500"
-											: "hover:bg-gray-100/50 border-l-4 border-transparent"
+											? "border-l-4 border-l-orange-500 bg-orange-50"
+											: ""
 									}`}
 								>
 									<div className="flex-1 overflow-hidden pl-1">
@@ -943,7 +1077,7 @@ export default function App() {
 									</div>
 									<button
 										onClick={(e) => handleDeleteChat(s.id, e)}
-										className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 p-1 cursor-pointer transition-opacity"
+										className="text-gray-400 hover:text-orange-500 opacity-0 group-hover:opacity-100 p-1 cursor-pointer transition-opacity"
 										title="删除对话"
 									>
 										✕
@@ -954,7 +1088,10 @@ export default function App() {
 				</div>
 			</div>
 			{/* 主内容区 */}
-			<div className="flex-1 relative h-full flex flex-col bg-white">
+			<div
+				className="flex-1 relative h-full flex flex-col"
+				style={{ background: "#FFFBF0" }}
+			>
 				{activeSession ? (
 					<>
 						<div className="h-14 flex justify-center items-center px-6 shrink-0 bg-white/90 backdrop-blur z-10 absolute top-0 w-full">
@@ -997,12 +1134,19 @@ export default function App() {
 												}
 											}
 
-											let newUpdatedAt = Math.max(updated.updatedAt, s.updatedAt);
+											let newUpdatedAt = Math.max(
+												updated.updatedAt,
+												s.updatedAt,
+											);
 											if (updated.messages.length > s.messages.length) {
 												newUpdatedAt = Date.now();
 											}
 
-											return { ...updated, title: newTitle, updatedAt: newUpdatedAt };
+											return {
+												...updated,
+												title: newTitle,
+												updatedAt: newUpdatedAt,
+											};
 										}
 										return s;
 									}),
@@ -1015,7 +1159,7 @@ export default function App() {
 						<div className="text-gray-400">没有选中的对话</div>
 						<button
 							onClick={handleNewChat}
-							className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors cursor-pointer shadow-sm text-sm"
+							className="px-6 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors cursor-pointer shadow-sm text-sm"
 						>
 							新建对话
 						</button>

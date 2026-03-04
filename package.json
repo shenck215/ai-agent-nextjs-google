@@ -11,9 +11,12 @@
   "dependencies": {
     "@ai-sdk/google": "3.0.31",
     "@ai-sdk/react": "3.0.101",
+    "@supabase/supabase-js": "^2.98.0",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react-syntax-highlighter": "^15.5.13",
     "ai": "6.0.99",
     "next": "16.1.6",
+    "pdf-parse": "^1.1.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",

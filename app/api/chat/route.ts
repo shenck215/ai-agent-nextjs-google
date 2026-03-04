@@ -7,39 +7,15 @@
  * 3. 为 AI 提供可用的工具
  * 4. 将 AI 的响应流式返回给前端
  */
+import { google } from "@ai-sdk/google";
+import { convertToModelMessages, streamText, tool, UIMessage } from "ai";
+import { z } from "zod";
+// 1. 导入你之前写的检索函数
+import { retrieveContext } from "@/lib/actions/rag";
 
-import { google } from "@ai-sdk/google"; // Google Gemini AI 模型
-import { convertToModelMessages, streamText, tool, UIMessage } from "ai"; // AI SDK 核心函数
-import { z } from "zod"; // Zod 是一个 TypeScript 类型验证库，用于定义工具的输入参数
-
-/**
- * 使用 Edge Runtime
- *
- * Edge Runtime 是一个轻量级的运行时环境，特点：
- * - 启动速度快
- * - 全球分布式部署
- * - 适合流式响应
- *
- * 这对于 AI 应用很重要，因为我们需要实时流式返回 AI 的回复
- */
 export const runtime = "edge";
 
-/**
- * POST 请求处理函数
- *
- * 当前端调用 /api/chat 时，这个函数会被执行
- */
 export async function POST(req: Request) {
-	/**
-	 * 1. 解析请求体，获取聊天历史
-	 *
-	 * messages 包含了所有的对话历史，格式如：
-	 * [
-	 *   { role: 'user', parts: [{ type: 'text', text: '今天天气怎么样' }] },
-	 *   { role: 'assistant', parts: [{ type: 'text', text: '请问您想查询哪个城市的天气？' }] },
-	 *   { role: 'user', parts: [{ type: 'text', text: '杭州' }] }
-	 * ]
-	 */
 	const { messages, model }: { messages: UIMessage[]; model?: string } =
 		await req.json();
 
@@ -51,8 +27,9 @@ export async function POST(req: Request) {
 			? "gemini-3-pro-preview"
 			: "gemini-3-flash-preview";
 
-	// 为了避免把助手之前生成的图片（file part）又发回给大模型导致 thought_signature 报错
-	// 我们过滤掉 assistant 消息里那些不支持传回历史的特殊 Part (比如 file / step-start 发乱)
+	// 知识库检索现已作为工具(searchKnowledgeBase)提供给模型
+
+	// 3. 消息过滤逻辑（保持你原有的逻辑，解决 thought_signature 报错）
 	const filteredMessages = messages.map((m) => {
 		if (m.role === "assistant" && m.parts) {
 			const newParts = m.parts.filter(
@@ -61,51 +38,32 @@ export async function POST(req: Request) {
 					p.type.startsWith("tool-") ||
 					(isThinking && p.type === "reasoning"),
 			);
-
-			// 如果过滤完发现没有任何内容（例如那一回合 AI 只生成了一张图片），
-			// 我们给它塞一段文本占位，防止 Gemini 因为 message 内容为空而报错。
 			if (newParts.length === 0) {
 				newParts.push({ type: "text", text: "[已生成了一张图片]" } as any);
 			}
-
 			return { ...m, parts: newParts };
 		}
 		return m;
 	});
 
-	/**
-	 * 2. 调用 AI 模型生成回复
-	 *
-	 * streamText 是 AI SDK 的核心函数，它会：
-	 * - 调用指定的 AI 模型
-	 * - 以流式方式返回结果（一边生成一边返回，不用等全部生成完）
-	 * - 自动处理工具调用
-	 */
 	const result = streamText({
-		/**
-		 * 指定使用的 AI 模型
-		 * 这里使用 Google 的 Gemini Pro 模型
-		 */
 		model: google(modelId),
-
-		/**
-		 * 转换消息格式
-		 *
-		 * convertToModelMessages 将前端的 UIMessage 格式
-		 * 转换为 AI 模型能理解的格式
-		 */
 		messages: await convertToModelMessages(filteredMessages),
 
-		// 思考模式才开启思考功能
+		system: `你叫"噜噜"，是一只超级可爱的水豚 AI 助手 🦦，性格活泼、温暖、充满好奇心。
+      在对话中，你始终以第一人称"噜噜"自称（例如"噜噜觉得..."、"你问的这个问题，噜噜来帮你查一查！"），语气轻松亲切，喜欢用可爱的表情和语气词，但回答要准确专业。
+      当用户询问业务相关问题时，请使用 searchKnowledgeBase 工具查询知识库。
+      当用户要求修改主题时，请使用 updateTheme 工具。
+      当用户询问房价时，请使用 getHousingPrice 工具。`,
+
+		// 思考模式配置
 		...(isThinking && {
 			providerOptions: {
-				google: {
-					thinkingConfig: { includeThoughts: true },
-				},
+				google: { thinkingConfig: { includeThoughts: true } },
 			},
 		}),
 
-		// 图片生成模式：开启 IMAGE 输出
+		// 图片生成模式配置
 		...(isImage && {
 			providerOptions: {
 				google: {
@@ -114,36 +72,43 @@ export async function POST(req: Request) {
 			},
 		}),
 
-		/**
-		 * 工具库定义（图片生成模式下不使用工具）
-		 */
+		// 工具定义逻辑
 		...(!isImage && {
 			tools: {
-				// 定义一个获取房价的工具
+				searchKnowledgeBase: tool({
+					description:
+						"当需要回答业务知识、特定规则或事实背景时，调用此工具搜索本地知识库",
+					inputSchema: z.object({
+						query: z.string().describe("需要搜索的关键词或问题陈述"),
+					}),
+					execute: async ({ query }) => {
+						console.log(`AI 正在搜索知识库: ${query}`);
+						// 结构化解构
+						const { text, sources } = await retrieveContext(query);
+						return {
+							foundInfo: text ? true : false,
+							content: text || "未找到相关知识",
+							sources: sources, // 将来源传递给前端
+						};
+					},
+				}),
 				getHousingPrice: tool({
 					description: "获取指定区域的平均房价",
 					inputSchema: z.object({
 						location: z.string().describe("区域名称，如：西湖区、未来科技城"),
 					}),
 					execute: async ({ location }) => {
-						// 这里对接真实的业务接口
 						console.log(`正在查询 ${location} 的数据...`);
-						// 模拟返回数据
 						return { price: 45000, unit: "CNY/sqm", trend: "stable" };
 					},
 				}),
 				updateTheme: tool({
-					description:
-						"修改应用界面主题颜色，可以指定具体的颜色描述或十六进制色值",
+					description: "修改应用界面主题颜色",
 					inputSchema: z.object({
-						// 使用 string 替代 enum，并给出详细的描述引导 AI
-						color: z
-							.string()
-							.describe("十六进制颜色值 (如 #FF5733) 或 CSS 标准颜色名称"),
+						color: z.string().describe("十六进制颜色值或 CSS 标准颜色名称"),
 						reason: z.string().describe("为什么要选择这个颜色的简短说明"),
 					}),
 					execute: async ({ color, reason }) => {
-						// 你可以在这里做一些色值校验，或者直接返回
 						return { success: true, activeColor: color, reason };
 					},
 				}),
@@ -151,15 +116,5 @@ export async function POST(req: Request) {
 		}),
 	});
 
-	/**
-	 * 3. 将结果以流式响应返回给前端
-	 *
-	 * toUIMessageStreamResponse() 会：
-	 * - 将 AI 的响应转换为前端可以理解的格式
-	 * - 以流式方式发送（Server-Sent Events）
-	 * - 前端会实时接收并显示
-	 *
-	 * 这样用户就能看到 AI "一个字一个字地打出来"，体验更好
-	 */
 	return result.toUIMessageStreamResponse();
 }
