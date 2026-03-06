@@ -29,7 +29,7 @@ export function IngestTest() {
     if (res.success) {
       alert(`解析成功！已将 PDF 拆分为 ${res.count} 个知识片段存入数据库。`);
     } else {
-      alert("解析失败: " + res.error);
+      alert("解析失败:！");
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";

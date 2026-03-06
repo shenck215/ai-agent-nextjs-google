@@ -3,7 +3,6 @@
 import { embed } from "ai";
 import { google } from "@ai-sdk/google";
 import { createClient } from "@supabase/supabase-js";
-import pdfParse from "pdf-parse";
 
 // 初始化 Supabase 客户端
 const supabase = createClient(
@@ -40,73 +39,77 @@ export async function ingestDocument(content: string, metadata: any = {}) {
 }
 
 /**
- * 核心逻辑：解析 PDF 并分片入库
+ * 🚀 智能递归分片：优先保留段落完整性
  */
-export async function ingestPdf(formData: FormData) {
-	try {
-		const file = formData.get("file") as File;
-		if (!file) throw new Error("未找到文件");
+function recursiveSplit(text: string, chunkSize = 800): string[] {
+	// 分隔符优先级：双换行(段落) > 单换行 > 句号 > 空格
+	const separators = ["\n\n", "\n", "。", "！", "？", " ", ""];
 
-		// 1. 读取文件 Buffer
-		const arrayBuffer = await file.arrayBuffer();
-		const buffer = Buffer.from(arrayBuffer);
+	function split(content: string): string[] {
+		if (content.length <= chunkSize) return [content];
 
-		// 2. 解析 PDF 文字
-		const data = await pdfParse(buffer);
-		const fullText = data.text;
+		const sep = separators.find((s) => content.includes(s)) || "";
+		const parts = content.split(sep);
+		const result: string[] = [];
+		let current = "";
 
-		// 3. 文本分片 (Simple Chunking)
-		// 作为 Lead，我们按 1000 字左右切分，保证向量检索的精准度
-		const chunks = fullText.match(/[\s\S]{1,1000}/g) || [];
-
-		console.log(`PDF 解析完成，准备投喂 ${chunks.length} 个片段...`);
-
-		// 4. 循环投喂每一个片段
-		for (const chunk of chunks) {
-			await ingestDocument(chunk, {
-				source: file.name,
-				type: "pdf",
-				timestamp: Date.now(),
-			});
+		for (const part of parts) {
+			if ((current + sep + part).length <= chunkSize) {
+				current += (current ? sep : "") + part;
+			} else {
+				if (current) result.push(current);
+				current = part;
+			}
 		}
-
-		return { success: true, count: chunks.length };
-	} catch (err) {
-		console.error("PDF Ingestion Error:", err);
-		return { success: false, error: String(err) };
+		if (current) result.push(current);
+		return result;
 	}
+	return split(text);
 }
 
 /**
- * 语义搜索：根据用户提问找回相关知识片段
+ * 📁 PDF 投喂：集成递归分片
+ */
+export async function ingestPdf(formData: FormData) {
+	const file = formData.get("file") as File;
+	const pdfParse = (await import("pdf-parse")).default;
+	const data = await pdfParse(Buffer.from(await file.arrayBuffer()));
+
+	// 使用智能分片
+	const chunks = recursiveSplit(data.text, 800);
+
+	for (const chunk of chunks) {
+		if (chunk.trim().length < 10) continue;
+		await ingestDocument(chunk, { source: file.name, type: "pdf" });
+	}
+	return { success: true, count: chunks.length };
+}
+
+/**
+ * 🛠️ 结构化检索：带来源与相似度
  */
 export async function retrieveContext(query: string) {
-	try {
-		// 1. 将用户的提问向量化
-		const { embedding } = await embed({
-			model: google.embedding("gemini-embedding-001"),
-			value: query,
-		});
+	const { embedding } = await embed({
+		model: google.embedding("gemini-embedding-001"),
+		value: query,
+	});
 
-		// 2. 调用我们在 Supabase 里定义的 RPC 函数
-		const { data: documents, error } = await supabase.rpc("match_documents", {
-			query_embedding: embedding,
-			match_threshold: 0.5, // 相似度超过 50% 的才要
-			match_count: 3, // 取最相关的 3 条
-		});
+	const { data: documents } = await supabase.rpc("match_documents", {
+		query_embedding: embedding,
+		match_threshold: 0.45,
+		match_count: 3,
+	});
 
-		if (error || !documents) return { text: "", sources: [] };
+	if (!documents) return { text: "", sources: [] };
 
-		// 3. 返回拼接后的文本用于 AI 阅读，同时返回 sources 用于前端显示
-		const contextText = documents.map((doc: any) => doc.content).join("\n\n");
-		const sources = documents.map((doc: any) => ({
+	return {
+		text: documents
+			.map((doc: any) => `[事实片段]: ${doc.content}`)
+			.join("\n\n"),
+		sources: documents.map((doc: any) => ({
 			content: doc.content,
-			source: doc.metadata?.source || "本地知识库",
+			source: doc.metadata?.source || "未知来源",
 			similarity: (doc.similarity * 100).toFixed(1),
-		}));
-		return { text: contextText, sources };
-	} catch (err) {
-		console.error("Retrieval Error:", err);
-		return { text: "", sources: [] };
-	}
+		})),
+	};
 }

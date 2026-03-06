@@ -19,9 +19,47 @@
 
 ### 🛠️ 智能工具调用 (Function Calling / Agentic Capabilities)
 AI 能够自动诊断用户意图，并在需要时自主调用后端定义的工具链，最后将结构化数据渲染为沉浸式 React 组件：
-- **🔍 知识库检索 (`searchKnowledgeBase`)**：集成了检索增强生成 (RAG) 能力，AI 可在需要时搜索知识库文档，界面会结构化展示命中的资料来源、相似度及支持折叠的原文内容。
+- **🔍 知识库检索 (`searchKnowledgeBase`)**：集成了检索增强生成 (RAG) 能力。AI 可在需要时使用多轮对话信息进行**自动语境消解与改写（Standalone Query）**，准确从知识库检索背景资料。而且，基于精心编排的 System Prompt，AI 在吐出检索结果之前，会用具有“人情味”的交互语言进行情绪安抚与自然转折，给用户带来极其流畅细腻的沟通体验。界面会结构化展示命中的资料来源、相似度及支持折叠的原文内容。
 - **🏡 房价查询 (`getHousingPrice`)**：AI 会自动提取用户对话中的“地名”，并在前端动态渲染美观的 `<PriceCard />` 组件展示结构化的趋势与价格。
 - **🎨 动态换肤 (`updateTheme`)**：当你要求 AI 改变界面主题时，它可以直接修改整个应用系统的背景配色。
+
+> **💡 进阶：RAG 多轮查询独立改写（Query Rewrite 备选方案）**
+> 目前系统基于 Agentic Schema 的约束，利用主模型在工具生成时的主题关联瞬间（Zero-latency）完成了多轮重写。若用于长而复杂的真实业务生产，或选用推理能力较弱的开源模型，**建议在检索流程的最前端，挂载一个独立且专门只负责清洗重写词句的廉价低延迟小模型节点**（如 `gemini-1.5-flash`），这种显式流水线的消解成功率通常逼近 100%：
+>
+> ```typescript
+> import { generateText } from "ai";
+> import { google } from "@ai-sdk/google";
+>
+> /**
+>  * 🧠 多轮对话重写：补全指代词 (Standalone Query)
+>  */
+> export async function generateStandaloneQuery(messages: any[]) {
+>   const { text } = await generateText({
+>     model: google("gemini-1.5-flash"),
+>     system: `你是一个搜索优化专家。根据对话历史，将用户最新的提问重写为一个独立的搜索语句。
+>     要求：补全所有指代词（它、那个政策等），只输出重写后的句子。`,
+>     messages: messages.slice(-5), // 取最近5轮
+>   });
+>   return text.trim();
+> }
+> ```
+>
+> **调用位置示例（在你的 `app/api/chat/route.ts` 的 `execute` 方法中最前端拦截）：**
+> ```typescript
+> searchKnowledgeBase: tool({
+>   description: "搜索本地知识库",
+>   inputSchema: z.object({ query: z.string() }),
+>   execute: async ({ query }) => {
+>     // 1. 显式前置拦截：把原词丢进便宜极速的 Flash 小模型做多轮指代消除
+>     const rewrittenQuery = await generateStandaloneQuery(messages);
+>     console.log(`[RAG] 原始意图: ${query} => 独立搜索词: ${rewrittenQuery}`);
+>
+>     // 2. 用洗干净的、信息完整的文本去查数据库
+>     const { text, sources } = await retrieveContext(rewrittenQuery);
+>     return { foundInfo: !!text, content: text, sources };
+>   },
+> }),
+> ```
 
 ### 🗂️ 历史会话归档 (Session Persistence)
 自动记录你在浏览器中的对话记录：
@@ -64,7 +102,9 @@ pnpm install
 在项目根目录下创建一个 `.env.local` 文件，并填入你的 API 密钥：
 
 ```env
-GOOGLE_GENERATIVE_AI_API_KEY="your_actual_api_key_here"
+GOOGLE_GENERATIVE_AI_API_KEY="your_google_api_key_here"
+NEXT_PUBLIC_SUPABASE_URL="your_supabase_url_here"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your_supabase_anon_key_here"
 ```
 
 ### 4. 运行开发服务器
@@ -78,6 +118,8 @@ pnpm dev
 
 ## 📂 项目结构导览
 
-- `app/page.tsx`: 前端聊天主交互界面（包含状态管理、拖拽粘贴逻辑、消息渲染器以及图片灯箱组件）。
-- `app/api/chat/route.ts`: Node 后端 API 路由，负责与 Gemini 模型建立链接，定义并执行 Server-side Tools，以及通过流式协议下发结果。
-- `app/components/`: 前端复用组件（如 `MarkdownRenderer`、`PriceCard` 等）。
+- `app/page.tsx`: 前端聊天主交互界面（骨架布局与 Session/Hooks 状态管理）。
+- `app/components/chat/`: 核心聊天组件目录（抽离了 `user-message`, `assistant-message`, `chat-input` 等以确保职责单一）。
+- `app/api/chat/route.ts`: Node 后端 API 路由，负责与 Gemini 模型建立链接，注入“人情味（Human Touch）”提示词，定义并执行 Server-side Tools（如 RAG 检索），以及通过流式协议下发结果。
+- `app/components/`: 前端其他复用组件（如 `MarkdownRenderer`、`PriceCard`、`Sidebar` 等）。
+- `lib/utils/chat.ts`: 共享数据结构与公共函数层。
