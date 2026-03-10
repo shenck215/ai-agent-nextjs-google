@@ -2,23 +2,28 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+
+import { ChatSession, generateId, filesToFileUIParts } from "@/lib/utils/chat";
 
 import {
-  ChatSession,
-  generateId,
-  filesToFileUIParts,
-} from "@/lib/utils/chat";
+  getChatsFromDB,
+  getMessagesFromDB,
+  upsertChatInDB,
+  deleteChatInDB,
+} from "@/lib/actions/storage";
+import { uploadImageClient, syncMessagesClient } from "@/lib/utils/upload";
 
 // 子组件
-import { LoadingSpinner } from "./components/chat/loading-spinner";
-import { ErrorToast } from "./components/chat/error-toast";
-import { CopyButton } from "./components/chat/copy-button";
-import { ImageViewer } from "./components/chat/image-viewer";
-import { UserMessage } from "./components/chat/user-message";
-import { AssistantMessage } from "./components/chat/assistant-message";
-import { ChatInput } from "./components/chat/chat-input";
-import { Sidebar } from "./components/sidebar";
+import { LoadingSpinner } from "@/app/components/chat/loading-spinner";
+import { ErrorToast } from "@/app/components/chat/error-toast";
+import { CopyButton } from "@/app/components/chat/copy-button";
+import { ImageViewer } from "@/app/components/chat/image-viewer";
+import { UserMessage } from "@/app/components/chat/user-message";
+import { AssistantMessage } from "@/app/components/chat/assistant-message";
+import { ChatInput } from "@/app/components/chat/chat-input";
+import { Sidebar } from "@/app/components/sidebar";
 
 function ChatWindow({
   session,
@@ -51,6 +56,7 @@ function ChatWindow({
   });
 
   const isInitialized = useRef(false);
+  const prevStatus = useRef(status);
 
   useEffect(() => {
     if (session.messages?.length > 0) {
@@ -60,6 +66,7 @@ function ChatWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
 
+  // 仅更新 React 状态（标题/model 等），不触发 DB 写入
   useEffect(() => {
     if (!isInitialized.current) return;
     if (
@@ -71,6 +78,96 @@ function ChatWindow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, model]);
+
+  // 仅在 streaming 结束（status 变为 ready）时才写入 DB，避免流式过程中频繁请求
+  useEffect(() => {
+    const wasStreaming =
+      prevStatus.current === "streaming" || prevStatus.current === "submitted";
+    prevStatus.current = status;
+    if (status === "ready" && wasStreaming && messages.length > 0) {
+      // 计算最新标题（如果还是"新对话"，就取第一条用户消息前 15 字）
+      let title = session.title;
+      if (title === "新对话") {
+        const firstUserMsg = messages.find((m) => m.role === "user");
+        if (firstUserMsg) {
+          const textParts = firstUserMsg.parts.filter(
+            (p: any) => p.type === "text",
+          );
+          const text = textParts
+            .map((p: any) => p.text)
+            .join(" ")
+            .trim();
+          title = text
+            ? text.substring(0, 15) + (text.length > 15 ? "..." : "")
+            : "图片对话";
+        }
+      }
+      upsertChatInDB(session.id, title, model).catch(console.error);
+
+      // 只处理最后一条 assistant 消息里 AI 生成的图片（历史消息已是公开 URL）
+      const uploadAiImages = async () => {
+        const lastMsg = messages[messages.length - 1];
+
+        // 最后一条不是 assistant，或者没有 base64 图片，直接同步
+        const base64Parts =
+          lastMsg?.role === "assistant"
+            ? (lastMsg.parts as any[]).filter(
+                (p: any) =>
+                  p.type === "file" &&
+                  typeof p.url === "string" &&
+                  p.url.startsWith("data:image"),
+              )
+            : [];
+
+        if (base64Parts.length === 0) {
+          syncMessagesClient(session.id, messages).catch(console.error);
+          return;
+        }
+
+        // 有 base64 图片，尝试全部上传
+        let uploadedCount = 0;
+        const newParts = await Promise.all(
+          (lastMsg.parts as any[]).map(async (p: any) => {
+            if (
+              p.type === "file" &&
+              typeof p.url === "string" &&
+              p.url.startsWith("data:image")
+            ) {
+              try {
+                const publicUrl = await uploadImageClient(
+                  p.url,
+                  `ai_image_${Date.now()}.png`,
+                  p.mediaType || "image/png",
+                );
+                uploadedCount++;
+                return { ...p, url: publicUrl };
+              } catch (err) {
+                console.error("AI image upload failed:", err);
+              }
+            }
+            return p;
+          }),
+        );
+
+        if (uploadedCount > 0) {
+          // 至少有一张上传成功，更新 state 并同步 DB
+          const patched = [
+            ...messages.slice(0, -1),
+            { ...lastMsg, parts: newParts },
+          ];
+          setMessages(patched as any);
+          syncMessagesClient(session.id, patched).catch(console.error);
+        } else {
+          // 全部上传失败：跳过本次 DB 同步，避免 DELETE 成功但 INSERT 失败导致数据丢失
+          console.error(
+            "All AI image uploads failed, skipping DB sync to preserve existing data",
+          );
+        }
+      };
+      uploadAiImages();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -281,7 +378,9 @@ function ChatWindow({
               >
                 {!isUser && (
                   <div className="font-bold flex items-center gap-2 mb-1">
-                    <span className="font-extrabold text-orange-500">噜噜:</span>
+                    <span className="font-extrabold text-orange-500">
+                      噜噜:
+                    </span>
                     {msgIndex === messages.length - 1 &&
                       (status === "streaming" || status === "submitted") && (
                         <LoadingSpinner />
@@ -310,8 +409,17 @@ function ChatWindow({
                       status={status}
                       reasoningTimers={reasoningTimers}
                       onViewImage={setViewingImage}
+                      onImageLoad={() => {
+                        if (!isUserScrolled.current) {
+                          bottomRef.current?.scrollIntoView({
+                            behavior: "smooth",
+                          });
+                        }
+                      }}
                     />
-                    {!(msgIndex === messages.length - 1 && status !== "ready") && (
+                    {!(
+                      msgIndex === messages.length - 1 && status !== "ready"
+                    ) && (
                       <CopyButton
                         text={m.parts
                           .filter((p) => p.type === "text")
@@ -355,9 +463,32 @@ function ChatWindow({
           const filesParts = hasFiles
             ? await filesToFileUIParts(selectedFiles)
             : [];
+
+          for (const part of filesParts) {
+            if (
+              part.type === "file" &&
+              typeof part.url === "string" &&
+              part.url.startsWith("data:image")
+            ) {
+              try {
+                const publicUrl = await uploadImageClient(
+                  part.url,
+                  part.filename || `upload_${Date.now()}.png`,
+                  part.mediaType,
+                );
+                part.url = publicUrl;
+              } catch (err) {
+                console.error("Failed to upload image", err);
+              }
+            }
+          }
+
           isUserScrolled.current = false;
           if (hasText && hasFiles) {
-            sendMessage({ text: input, files: filesParts }, { body: { model } });
+            sendMessage(
+              { text: input, files: filesParts },
+              { body: { model } },
+            );
           } else if (hasText) {
             sendMessage({ text: input }, { body: { model } });
           } else {
@@ -388,57 +519,59 @@ function ChatWindow({
   );
 }
 
-export default function App() {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    if (typeof window === "undefined") return [];
-    const saved = localStorage.getItem("chat_sessions");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+/**
+ * 封装的内部聊天应用，包裹了所有的 state 与 effect
+ * 使用 useRouter / useSearchParams 获取活动会话 id
+ */
+function AppContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeSessionId = searchParams.get("id");
 
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoaded(true), 0);
-    return () => clearTimeout(timer);
+    getChatsFromDB().then(async (dbChats) => {
+      // 如果 URL 上已有 id ，就预先加载该会话的消息
+      const urlId = new URLSearchParams(window.location.search).get("id");
+      if (urlId) {
+        const target = dbChats.find((c) => c.id === urlId);
+        if (target) {
+          const msgs = await getMessagesFromDB(urlId);
+          target.messages = msgs as any;
+        }
+      }
+      setSessions(dbChats);
+      setIsLoaded(true);
+    });
   }, []);
 
-  useEffect(() => {
-    if (isLoaded) {
-      try {
-        const sanitizedSessions = sessions.map((session) => ({
-          ...session,
-          messages: session.messages.map((msg) => ({
-            ...msg,
-            parts: msg.parts
-              ? msg.parts.map((p: any) => {
-                  if (
-                    p.type === "file" &&
-                    typeof p.url === "string" &&
-                    p.url.startsWith("data:")
-                  ) {
-                    return { ...p, url: "" };
-                  }
-                  return p;
-                })
-              : [],
-          })),
-        }));
-        localStorage.setItem("chat_sessions", JSON.stringify(sanitizedSessions));
-      } catch (e) {
-        console.error("Failed to save to localStorage:", e);
+  /**
+   * 处理选择左侧会话
+   * 1. 根据 URL 加载对应会话的消息
+   * 2. 如果之前未加载消息，则从 Supabase 懒加载
+   * 3. 推送新 id 到 URL 触发视图更新
+   */
+  const handleSelectSession = async (id: string) => {
+    const session = sessions.find((s) => s.id === id);
+    // 先把消息加载进 sessions 状态，再导航，避免 ChatWindow 拿到空消息列表
+    if (session && session.messages.length === 0) {
+      const msgs = await getMessagesFromDB(id);
+      if (msgs.length > 0) {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === id ? { ...s, messages: msgs as any } : s)),
+        );
       }
     }
-  }, [sessions, isLoaded]);
+    router.push(`?id=${id}`);
+  };
 
-  const handleNewChat = () => {
+  /**
+   * 新建对话
+   * 初始化一个空聊天，存入 DB，并导航到新 id
+   */
+  const handleNewChat = async () => {
     const newSession: ChatSession = {
       id: generateId(),
       title: "新对话",
@@ -446,19 +579,23 @@ export default function App() {
       messages: [],
       model: "fast",
     };
+    await upsertChatInDB(newSession.id, newSession.title, newSession.model!);
     setSessions((prev) => [newSession, ...prev]);
-    setActiveSessionId(newSession.id);
+    router.push(`?id=${newSession.id}`);
   };
 
-  const handleDeleteChat = (id: string, e: React.MouseEvent) => {
+  /**
+   * 删除指定的对话
+   * 清除 DB，并更新 state，若删除的是当前选中的则清空 URL
+   */
+  const handleDeleteChat = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== id);
-      if (activeSessionId === id) {
-        setActiveSessionId(next.length > 0 ? next[0].id : null);
-      }
-      return next;
-    });
+    await deleteChatInDB(id);
+    // router.push 必须在 setSessions 回调之外调用，否则报渲染期间更新 Router 的错误
+    if (activeSessionId === id) {
+      router.push("/");
+    }
+    setSessions((prev) => prev.filter((s) => s.id !== id));
   };
 
   if (!isLoaded)
@@ -467,7 +604,9 @@ export default function App() {
         className="h-screen w-full flex items-center justify-center"
         style={{ background: "#FFFBF0" }}
       >
-        <span className="text-orange-500 text-2xl animate-pulse">噜噜来啦…</span>
+        <span className="text-orange-500 text-2xl animate-pulse">
+          噜噜来啦…
+        </span>
       </div>
     );
 
@@ -479,7 +618,7 @@ export default function App() {
         sessions={sessions}
         activeSessionId={activeSessionId}
         onNewChat={handleNewChat}
-        onSelectSession={setActiveSessionId}
+        onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteChat}
       />
 
@@ -560,5 +699,13 @@ export default function App() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Suspense>
+      <AppContent />
+    </Suspense>
   );
 }

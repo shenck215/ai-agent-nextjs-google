@@ -16,41 +16,41 @@ import { retrieveContext } from "@/lib/actions/rag";
 export const runtime = "edge";
 
 export async function POST(req: Request) {
-	const { messages, model }: { messages: UIMessage[]; model?: string } =
-		await req.json();
+  const { messages, model }: { messages: UIMessage[]; model?: string } =
+    await req.json();
 
-	const isThinking = model === "thinking";
-	const isImage = model === "image";
-	const modelId = isImage
-		? "gemini-3-pro-image-preview"
-		: isThinking
-			? "gemini-3-pro-preview"
-			: "gemini-3-flash-preview";
+  const isThinking = model === "thinking";
+  const isImage = model === "image";
+  const modelId = isImage
+    ? "gemini-3-pro-image-preview"
+    : isThinking
+      ? "gemini-3-pro-preview"
+      : "gemini-3-flash-preview";
 
-	// 知识库检索现已作为工具(searchKnowledgeBase)提供给模型
+  // 知识库检索现已作为工具(searchKnowledgeBase)提供给模型
 
-	// 3. 消息过滤逻辑（保持你原有的逻辑，解决 thought_signature 报错）
-	const filteredMessages = messages.map((m) => {
-		if (m.role === "assistant" && m.parts) {
-			const newParts = m.parts.filter(
-				(p) =>
-					p.type === "text" ||
-					p.type.startsWith("tool-") ||
-					(isThinking && p.type === "reasoning"),
-			);
-			if (newParts.length === 0) {
-				newParts.push({ type: "text", text: "[已生成了一张图片]" } as any);
-			}
-			return { ...m, parts: newParts };
-		}
-		return m;
-	});
+  // 3. 消息过滤逻辑（保持你原有的逻辑，解决 thought_signature 报错）
+  const filteredMessages = messages.map((m) => {
+    if (m.role === "assistant" && m.parts) {
+      const newParts = m.parts.filter(
+        (p) =>
+          p.type === "text" ||
+          p.type.startsWith("tool-") ||
+          (isThinking && p.type === "reasoning"),
+      );
+      if (newParts.length === 0) {
+        newParts.push({ type: "text", text: "[已生成了一张图片]" } as any);
+      }
+      return { ...m, parts: newParts };
+    }
+    return m;
+  });
 
-	const result = streamText({
-		model: google(modelId),
-		messages: await convertToModelMessages(filteredMessages),
+  const result = streamText({
+    model: google(modelId),
+    messages: await convertToModelMessages(filteredMessages),
 
-		system: `你叫"噜噜"，是一只超级可爱的水豚 AI 助手 🦦，性格活泼、温暖、充满好奇心。
+    system: `你叫"噜噜"，是一只超级可爱的水豚 AI 助手 🦦，性格活泼、温暖、充满好奇心。
       在对话中，你始终以第一人称"噜噜"自称（例如"噜噜觉得..."、"你问的这个问题，噜噜来帮你查一查！"），语气轻松亲切，喜欢用可爱的表情和语气词，但回答要准确专业。
 
       【多轮对话与知识库使用指引（人情味 RAG）】
@@ -61,69 +61,69 @@ export async function POST(req: Request) {
       当用户要求修改主题时，请使用 updateTheme 工具。
       当用户询问房价时，请使用 getHousingPrice 工具。`,
 
-		// 思考模式配置
-		...(isThinking && {
-			providerOptions: {
-				google: { thinkingConfig: { includeThoughts: true } },
-			},
-		}),
+    // 思考模式配置
+    ...(isThinking && {
+      providerOptions: {
+        google: { thinkingConfig: { includeThoughts: true } },
+      },
+    }),
 
-		// 图片生成模式配置
-		...(isImage && {
-			providerOptions: {
-				google: {
-					responseModalities: ["TEXT", "IMAGE"] as ("TEXT" | "IMAGE")[],
-				},
-			},
-		}),
+    // 图片生成模式配置
+    ...(isImage && {
+      providerOptions: {
+        google: {
+          responseModalities: ["TEXT", "IMAGE"] as ("TEXT" | "IMAGE")[],
+        },
+      },
+    }),
 
-		// 工具定义逻辑
-		...(!isImage && {
-			tools: {
-				searchKnowledgeBase: tool({
-					description:
-						"当需要回答业务知识、特定规则或事实背景时，调用此工具搜索本地知识库。",
-					inputSchema: z.object({
-						query: z
-							.string()
-							.describe(
-								"【非常重要】结合上下文多轮对话结构，将用户的简意、代词等改写为完整、独立的搜索词（Standalone Query），必须包含所有必要的背景信息才可以触发检索",
-							),
-					}),
-					execute: async ({ query }) => {
-						console.log(`AI 正在搜索知识库: ${query}`);
-						// 结构化解构
-						const { text, sources } = await retrieveContext(query);
-						return {
-							foundInfo: text ? true : false,
-							content: text || "未找到相关知识",
-							sources: sources, // 将来源传递给前端
-						};
-					},
-				}),
-				getHousingPrice: tool({
-					description: "获取指定区域的平均房价",
-					inputSchema: z.object({
-						location: z.string().describe("区域名称，如：西湖区、未来科技城"),
-					}),
-					execute: async ({ location }) => {
-						console.log(`正在查询 ${location} 的数据...`);
-						return { price: 45000, unit: "CNY/sqm", trend: "stable" };
-					},
-				}),
-				updateTheme: tool({
-					description: "修改应用界面主题颜色",
-					inputSchema: z.object({
-						color: z.string().describe("十六进制颜色值或 CSS 标准颜色名称"),
-						reason: z.string().describe("为什么要选择这个颜色的简短说明"),
-					}),
-					execute: async ({ color, reason }) => {
-						return { success: true, activeColor: color, reason };
-					},
-				}),
-			},
-		}),
-	});
+    // 工具定义逻辑
+    ...(!isImage && {
+      tools: {
+        searchKnowledgeBase: tool({
+          description:
+            "当需要回答业务知识、特定规则或事实背景时，调用此工具搜索本地知识库。",
+          inputSchema: z.object({
+            query: z
+              .string()
+              .describe(
+                "【非常重要】结合上下文多轮对话结构，将用户的简意、代词等改写为完整、独立的搜索词（Standalone Query），必须包含所有必要的背景信息才可以触发检索",
+              ),
+          }),
+          execute: async ({ query }) => {
+            console.log(`AI 正在搜索知识库: ${query}`);
+            // 结构化解构
+            const { text, sources } = await retrieveContext(query);
+            return {
+              foundInfo: text ? true : false,
+              content: text || "未找到相关知识",
+              sources: sources, // 将来源传递给前端
+            };
+          },
+        }),
+        getHousingPrice: tool({
+          description: "获取指定区域的平均房价",
+          inputSchema: z.object({
+            location: z.string().describe("区域名称，如：西湖区、未来科技城"),
+          }),
+          execute: async ({ location }) => {
+            console.log(`正在查询 ${location} 的数据...`);
+            return { price: 45000, unit: "CNY/sqm", trend: "stable" };
+          },
+        }),
+        updateTheme: tool({
+          description: "修改应用界面主题颜色",
+          inputSchema: z.object({
+            color: z.string().describe("十六进制颜色值或 CSS 标准颜色名称"),
+            reason: z.string().describe("为什么要选择这个颜色的简短说明"),
+          }),
+          execute: async ({ color, reason }) => {
+            return { success: true, activeColor: color, reason };
+          },
+        }),
+      },
+    }),
+  });
 
-	return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse();
 }

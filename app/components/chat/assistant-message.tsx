@@ -5,13 +5,14 @@ import React, { useState, useEffect } from "react";
 import { UIMessage } from "ai";
 import MarkdownRenderer from "@/app/components/markdown-renderer";
 import { ToolResult } from "./tool-result";
-import { downloadBase64 } from "@/lib/utils/chat";
+import { downloadImage } from "@/lib/utils/chat";
 
 interface AssistantMessageProps {
   message: UIMessage;
   status: string;
   reasoningTimers: Map<string, { startMs: number; doneMs?: number }>;
   onViewImage: (url: string) => void;
+  onImageLoad?: () => void;
 }
 
 /** AI 消息内容区：遍历 parts，分发渲染各类型 */
@@ -20,6 +21,7 @@ export function AssistantMessage({
   status,
   reasoningTimers,
   onViewImage,
+  onImageLoad,
 }: AssistantMessageProps) {
   // 利用 state 管理当前时间以规避 Date.now() 在 render 中的不纯调用警告
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
@@ -105,6 +107,7 @@ export function AssistantMessage({
                 alt="AI 生成的图片"
                 className="max-w-full max-h-96 rounded-xl border border-gray-200 shadow-sm cursor-zoom-in block"
                 onClick={() => onViewImage(imgUrl)}
+                onLoad={onImageLoad}
               />
               <div className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
@@ -114,7 +117,7 @@ export function AssistantMessage({
                   ⛶ 放大
                 </button>
                 <button
-                  onClick={() => downloadBase64(imgUrl)}
+                  onClick={() => downloadImage(imgUrl)}
                   className="px-2 py-1 rounded bg-black/60 text-white text-xs cursor-pointer hover:bg-black/80 transition-colors"
                 >
                   ↓ 下载
