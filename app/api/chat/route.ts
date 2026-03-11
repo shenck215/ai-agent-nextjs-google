@@ -1,17 +1,18 @@
 /**
  * AI Agent 聊天 API 路由
  *
- * 这是后端的核心文件，负责：
- * 1. 接收前端发来的消息
- * 2. 调用 AI 模型（Google Gemini）
- * 3. 为 AI 提供可用的工具
- * 4. 将 AI 的响应流式返回给前端
+ * 核心职责：
+ * 1. 接收前端消息（包含文本、图片）和模型配置（Fast / Thinking / Image）
+ * 2. 预处理历史消息，确保满足特定模型（如 Thinking 模式下）的渲染格式要求
+ * 3. 定义并提供 System Prompt，赋予 AI "水豚噜噜"的拟人化人设与交互指引
+ * 4. 动态下发 Server-side Tools（如 searchKnowledgeBase 知识检索、getHousingPrice 房价查询、updateTheme 换肤）
+ * 5. 与 Google Gemini 建立流式连接并返回数据
  */
 import { google } from "@ai-sdk/google";
 import { convertToModelMessages, streamText, tool, UIMessage } from "ai";
 import { z } from "zod";
-// 1. 导入你之前写的检索函数
-import { retrieveContext } from "@/lib/actions/rag";
+// 引入由知识库服务（RAG）提供的检索方法
+import { retrieveContext } from "@/lib/actions/knowledge";
 
 export const runtime = "edge";
 

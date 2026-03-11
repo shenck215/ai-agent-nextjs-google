@@ -14,6 +14,8 @@ export const metadata: Metadata = {
   description: "水豚噜噜 - 活泼可爱的 AI 智能体，随时准备帮助你！",
 };
 
+import { MessageProvider } from "./components/ui/message";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -22,6 +24,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className={`${nunito.variable} antialiased`} style={{ fontFamily: "var(--font-nunito), 'PingFang SC', sans-serif" }}>
+        <MessageProvider />
         <UserMenu />
         {children}
       </body>

@@ -1,17 +1,36 @@
 "use client";
 import { createClient } from "@/lib/supabase/client";
-import { useState } from "react";
-import Image from "next/image";
+import { useState, useEffect } from "react";
+import { message } from "@/app/components/ui/message";
 
 export default function LoginPage() {
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    // 检查 URL 中的 hash 错误（例如因邮箱自动扫描导致链接在用户点击前已失效）
+    const hash = window.location.hash;
+    if (hash && hash.includes("error=access_denied")) {
+      if (hash.includes("otp_expired")) {
+        message.warning(
+          "登录链接已失效。如果您的邮箱会自动扫描链接，请尝试右键复制链接并在浏览器中打开。",
+          5000,
+        );
+      } else {
+        message.error("登录验证失败，请重新尝试。", 5000);
+      }
+      // 避免刷新页面后再次提示报错
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
-    setMessage("");
     const email = new FormData(e.currentTarget).get("email") as string;
 
     const { error } = await supabase.auth.signInWithOtp({
@@ -20,9 +39,9 @@ export default function LoginPage() {
     });
 
     if (error) {
-      setMessage("发送失败：" + error.message);
+      message.error("发送失败：" + error.message);
     } else {
-      setMessage("✨ 登录魔法链接已发送到您的邮箱，请查收！");
+      message.success("✨ 登录魔法链接已发送到您的邮箱，请查收！");
     }
     setLoading(false);
   };
@@ -102,15 +121,6 @@ export default function LoginPage() {
             )}
           </button>
         </form>
-
-        {/* Message Alert */}
-        {message && (
-          <div
-            className={`mt-6 p-4 rounded-2xl text-sm font-medium text-center animate-in fade-in slide-in-from-bottom-2 duration-300 ${message.includes("发") ? "bg-orange-50 text-orange-800 border border-orange-200" : "bg-red-50 text-red-800 border border-red-200"}`}
-          >
-            {message}
-          </div>
-        )}
       </div>
 
       {/* Footer */}

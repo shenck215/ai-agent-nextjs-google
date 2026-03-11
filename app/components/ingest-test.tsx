@@ -1,7 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useRef } from 'react';
-import { ingestDocument, ingestPdf } from '@/lib/actions/rag';
+import { useState, useRef } from "react";
+import Link from "next/link";
+import { ingestText, ingestPdf } from "@/lib/actions/knowledge";
 
 export function IngestTest() {
   const [text, setText] = useState("");
@@ -11,8 +12,11 @@ export function IngestTest() {
   // 处理纯文本投喂
   const handleTextIngest = async () => {
     setLoading(true);
-    const res = await ingestDocument(text, { source: 'manual-input' });
-    if (res.success) { alert("文字知识点已存入！"); setText(""); }
+    const res = await ingestText(text, { source: "知识库输入框录入" });
+    if (res.success) {
+      alert("文字知识点已存入！");
+      setText("");
+    }
     setLoading(false);
   };
 
@@ -23,7 +27,7 @@ export function IngestTest() {
 
     setLoading(true);
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
 
     const res = await ingestPdf(formData);
     if (res.success) {
@@ -44,7 +48,9 @@ export function IngestTest() {
 
       {/* PDF 上传区 */}
       <div className="mb-6 p-4 border-2 border-dashed border-violet-200 rounded-xl bg-violet-50/30 flex flex-col items-center">
-        <p className="text-sm text-violet-600 mb-3 font-medium">支持 PDF 政策文件批量录入</p>
+        <p className="text-sm text-violet-600 mb-3 font-medium">
+          支持 PDF 政策文件批量录入
+        </p>
         <input
           type="file"
           accept=".pdf"
@@ -62,8 +68,12 @@ export function IngestTest() {
       </div>
 
       <div className="relative mb-6">
-        <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-gray-100"></span></div>
-        <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-gray-400">或者手动录入</span></div>
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t border-gray-100"></span>
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-white px-2 text-gray-400">或者手动录入</span>
+        </div>
       </div>
 
       {/* 文本录入区 */}
@@ -81,6 +91,15 @@ export function IngestTest() {
       >
         保存纯文本知识
       </button>
+
+      <div className="mt-8 text-center">
+        <Link
+          href="/"
+          className="inline-flex items-center justify-center gap-2 text-violet-600 hover:text-violet-700 font-medium transition-colors"
+        >
+          返回首页
+        </Link>
+      </div>
     </div>
   );
 }

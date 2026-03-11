@@ -1,11 +1,16 @@
 "use server";
-// lib/actions/storage.ts
+
 import { createClient } from "@/lib/supabase/server";
 
-// 这里不需要在顶层初始化 supabase，因为 createClient() 是异步的，
-// 我们在每个具体的函数内部去调用 await createClient()。
-/** 获取所有对话列表 */
-export async function getChatsFromDB(): Promise<any[]> {
+/**
+ * 获取当前用户所有的对话列表 (Chat Sessions)
+ *
+ * 默认按照更新时间降序排列，仅返回对话的元数据（标题、模型型号、更新时刻）。
+ * 实际消息记录 (messages) 数组将在此被初始化为空，待进入特定会话时按需懒加载。
+ *
+ * @returns {Promise<any[]>} 会话概要列表
+ */
+export async function getChats(): Promise<any[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("chats")
@@ -25,8 +30,15 @@ export async function getChatsFromDB(): Promise<any[]> {
   }));
 }
 
-/** 获取特定对话的消息记录 */
-export async function getMessagesFromDB(chatId: string) {
+/**
+ * 获取特定对话 (Chat) 的完整历史消息记录
+ *
+ * 按照消息创建时间戳进行正序排列，用于还原聊天上下文流。
+ * 
+ * @param {string} chatId - 对话的唯一标识符
+ * @returns {Promise<any[]>} 该对话下的所有历史消息
+ */
+export async function getMessages(chatId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("messages")
@@ -47,14 +59,19 @@ export async function getMessagesFromDB(chatId: string) {
   }));
 }
 
-/** 新增或更新对话（标题、模型等信息） */
-export async function upsertChatInDB(chatId: string, title: string, model: string) {
+/**
+ * 新增或更新对话元信息 (Upsert Chat)
+ *
+ * 会先行检索系统中的当前用户凭证，并自动建立外键关联。
+ * 如果给定 chatId 在数据库中已存在，则更新标题及模型偏好；反之则插入一条新会话。
+ *
+ * @param {string} chatId - 客户端提供或生成的唯一对话ID
+ * @param {string} title - AI 智能推导出的标题或用户自定义标题
+ * @param {string} model - 用户在此会话偏好使用的模型型号
+ */
+export async function saveChat(chatId: string, title: string, model: string) {
   const supabase = await createClient();
   
-  // 必须指定 user_id 或者是走数据库 default auth.uid()
-  // 但 upsert 如果不存在会自动 insert，由于我们开启了 RLS，所以会自动填入 default 的 auth.uid() （前提是 auth() 有效）。
-  // 为了安全和明确，我们可以明确传入 user_id，或者依赖 default。
-  // 我们这里先获取一下 session 确认
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     console.error("upsert chat error: unauthorized");
@@ -73,12 +90,17 @@ export async function upsertChatInDB(chatId: string, title: string, model: strin
   }
 }
 
-/** 删除指定对话 */
-export async function deleteChatInDB(chatId: string) {
+/**
+ * 彻底删除指定的对话
+ *
+ * 这将会依靠 Supabase DB 层面的外键 CASCADED 设置连带清除属于该对话的所有对应 Messages 消息。
+ *
+ * @param {string} chatId - 需要抹除的对话ID
+ */
+export async function deleteChat(chatId: string) {
   const supabase = await createClient();
   const { error } = await supabase.from("chats").delete().eq("id", chatId);
   if (error) {
     console.error("delete chat error", error);
   }
 }
-

@@ -8,17 +8,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChatSession, generateId, filesToFileUIParts } from "@/lib/utils/chat";
 
 import {
-  getChatsFromDB,
-  getMessagesFromDB,
-  upsertChatInDB,
-  deleteChatInDB,
-} from "@/lib/actions/storage";
+  getChats,
+  getMessages,
+  saveChat,
+  deleteChat,
+} from "@/lib/actions/chat";
 import { uploadImageClient, syncMessagesClient } from "@/lib/utils/upload";
 
 // 子组件
 import { LoadingSpinner } from "@/app/components/chat/loading-spinner";
-import { ErrorToast } from "@/app/components/chat/error-toast";
 import { CopyButton } from "@/app/components/chat/copy-button";
+import { message } from "@/app/components/ui/message";
 import { ImageViewer } from "@/app/components/chat/image-viewer";
 import { UserMessage } from "@/app/components/chat/user-message";
 import { AssistantMessage } from "@/app/components/chat/assistant-message";
@@ -102,7 +102,7 @@ function ChatWindow({
             : "图片对话";
         }
       }
-      upsertChatInDB(session.id, title, model).catch(console.error);
+      saveChat(session.id, title, model).catch(console.error);
 
       // 只处理最后一条 assistant 消息里 AI 生成的图片（历史消息已是公开 URL）
       const uploadAiImages = async () => {
@@ -201,7 +201,6 @@ function ChatWindow({
     setSelectedFiles([]);
   }, []);
 
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
 
@@ -243,10 +242,8 @@ function ChatWindow({
     } catch {
       // keep original
     }
-    setToastMsg(msg);
+    message.error(msg, 5000);
     clearError();
-    const t = setTimeout(() => setToastMsg(null), 5000);
-    return () => clearTimeout(t);
   }, [error, clearError]);
 
   const [reasoningTimers, setReasoningTimers] = useState<
@@ -352,10 +349,6 @@ function ChatWindow({
     >
       {viewingImage && (
         <ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />
-      )}
-
-      {toastMsg && (
-        <ErrorToast msg={toastMsg} onClose={() => setToastMsg(null)} />
       )}
 
       <div
@@ -532,13 +525,13 @@ function AppContent() {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    getChatsFromDB().then(async (dbChats) => {
+    getChats().then(async (dbChats) => {
       // 如果 URL 上已有 id ，就预先加载该会话的消息
       const urlId = new URLSearchParams(window.location.search).get("id");
       if (urlId) {
         const target = dbChats.find((c) => c.id === urlId);
         if (target) {
-          const msgs = await getMessagesFromDB(urlId);
+          const msgs = await getMessages(urlId);
           target.messages = msgs as any;
         }
       }
@@ -557,7 +550,7 @@ function AppContent() {
     const session = sessions.find((s) => s.id === id);
     // 先把消息加载进 sessions 状态，再导航，避免 ChatWindow 拿到空消息列表
     if (session && session.messages.length === 0) {
-      const msgs = await getMessagesFromDB(id);
+      const msgs = await getMessages(id);
       if (msgs.length > 0) {
         setSessions((prev) =>
           prev.map((s) => (s.id === id ? { ...s, messages: msgs as any } : s)),
@@ -579,7 +572,7 @@ function AppContent() {
       messages: [],
       model: "fast",
     };
-    await upsertChatInDB(newSession.id, newSession.title, newSession.model!);
+    await saveChat(newSession.id, newSession.title, newSession.model!);
     setSessions((prev) => [newSession, ...prev]);
     router.push(`?id=${newSession.id}`);
   };
@@ -590,7 +583,7 @@ function AppContent() {
    */
   const handleDeleteChat = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    await deleteChatInDB(id);
+    await deleteChat(id);
     // router.push 必须在 setSessions 回调之外调用，否则报渲染期间更新 Router 的错误
     if (activeSessionId === id) {
       router.push("/");
