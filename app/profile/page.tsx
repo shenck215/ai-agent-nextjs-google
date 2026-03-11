@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { getProfile, upsertProfile } from "@/lib/actions/profile";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { message } from "@/app/components/ui/message";
 import { createClient } from "@/lib/supabase/client";
 
@@ -127,10 +128,13 @@ export default function ProfilePage() {
                 onClick={() => fileInputRef.current?.click()}
               >
                 {avatarUrl ? (
-                  <img
+                  <Image
                     src={avatarUrl}
                     alt="Avatar"
+                    width={64}
+                    height={64}
                     className="w-full h-full object-cover"
+                    unoptimized
                   />
                 ) : (
                   <span className="text-2xl mix-blend-multiply">👤</span>

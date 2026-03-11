@@ -14,7 +14,6 @@ import { z } from "zod";
 // 引入由知识库服务（RAG）提供的检索方法
 import { retrieveContext } from "@/lib/actions/knowledge";
 
-export const runtime = "edge";
 
 export async function POST(req: Request) {
   const { messages, model }: { messages: UIMessage[]; model?: string } =

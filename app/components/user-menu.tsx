@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { getProfile } from "@/lib/actions/profile";
 import { createClient } from "@/lib/supabase/client";
@@ -45,10 +46,13 @@ export function UserMenu() {
         onClick={() => setIsOpen(!isOpen)}
         className="w-10 h-10 flex items-center justify-center rounded-full overflow-hidden border-2 border-orange-500 shadow-md transition-transform hover:scale-105 cursor-pointer bg-orange-50"
       >
-        <img
+        <Image
           src={profile?.avatar_url || "/lulu-avatar.png"}
           alt={profile?.nickname || "噜噜头像"}
+          width={40}
+          height={40}
           className="w-10 h-10 object-cover"
+          unoptimized
         />
       </button>
 
