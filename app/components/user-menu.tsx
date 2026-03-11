@@ -2,21 +2,29 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { getProfile } from "@/lib/actions/profile";
+import { createClient } from "@/lib/supabase/client";
 
 export function UserMenu() {
   const [isOpen, setIsOpen] = useState(false);
-  const [profile, setProfile] = useState<{ nickname?: string; avatar_url?: string } | null>(null);
+  const [profile, setProfile] = useState<{
+    nickname?: string;
+    avatar_url?: string;
+  } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
+  const router = useRouter();
+  const supabase = createClient();
 
   useEffect(() => {
     getProfile()
       .then((p) => {
         if (p) setProfile({ nickname: p.nickname, avatar_url: p.avatar_url });
       })
-      .catch((err) => console.error("Failed to load profile for UserMenu", err));
+      .catch((err) =>
+        console.error("Failed to load profile for UserMenu", err),
+      );
   }, []);
 
   // 点击外部收起气泡
@@ -75,10 +83,11 @@ export function UserMenu() {
 
           <div className="py-1 border-t border-gray-100 mt-1">
             <button
-              className="w-full text-left px-4 py-2 text-sm text-orange-600 hover:bg-red-50 transition-colors flex items-center gap-2 cursor-pointer"
-              onClick={() => {
+              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition-colors flex items-center gap-2 cursor-pointer"
+              onClick={async () => {
                 setIsOpen(false);
-                // 暂不跳转
+                await supabase.auth.signOut();
+                router.push("/login");
               }}
             >
               <span>🚪</span> 退出登录

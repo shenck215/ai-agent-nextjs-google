@@ -186,7 +186,7 @@ export default function ProfilePage() {
                 正在保存...
               </>
             ) : (
-              "保存档案 ✨"
+              "保存档案"
             )}
           </button>
 
