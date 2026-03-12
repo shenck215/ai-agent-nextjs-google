@@ -69,6 +69,9 @@ export function UserMenu() {
       {/* 头像按钮 */}
       <button
         onClick={() => {
+          if (!profile) {
+            return;
+          }
           setIsOpen(!isOpen);
           if (!isOpen) refreshCallsStatus();
         }}
