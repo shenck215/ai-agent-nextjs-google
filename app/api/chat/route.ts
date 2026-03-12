@@ -13,11 +13,30 @@ import { convertToModelMessages, streamText, tool, UIMessage } from "ai";
 import { z } from "zod";
 // 引入由知识库服务（RAG）提供的检索方法
 import { retrieveContext } from "@/lib/actions/knowledge";
+// 引入每日调用次数限制检查方法
+import { checkAndIncrementDailyCall } from "@/lib/actions/profile";
 
 
 export async function POST(req: Request) {
   const { messages, model }: { messages: UIMessage[]; model?: string } =
     await req.json();
+
+  // ① 每日调用次数限制校验
+  const { allowed, remaining, limit } = await checkAndIncrementDailyCall();
+  if (!allowed) {
+    return Response.json(
+      {
+        error: `今日调用次数已达上限（${limit} 次），明天再来找噜噜吧 🦦`,
+        remaining: 0,
+        limit,
+      },
+      { status: 429 },
+    );
+  }
+  // remaining === -1 时为无限次，仅在有限次模式下打印剩余次数
+  if (remaining !== -1) {
+    console.log(`[rate-limit] 用户今日剩余调用次数: ${remaining}/${limit}`);
+  }
 
   const isThinking = model === "thinking";
   const isImage = model === "image";

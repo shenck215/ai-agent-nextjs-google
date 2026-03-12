@@ -7,9 +7,11 @@ import Link from "next/link";
 import Image from "next/image";
 import { message } from "@/app/components/ui/message";
 import { createClient } from "@/lib/supabase/client";
+import { useUserStore } from "@/lib/store/user-store";
 
 export default function ProfilePage() {
   const router = useRouter();
+  const { fetchUserData } = useUserStore();
   const [nickname, setNickname] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [loading, setLoading] = useState(true);
@@ -69,6 +71,8 @@ export default function ProfilePage() {
     setSaving(true);
     try {
       await upsertProfile(nickname, avatarUrl);
+      // 更新 Zustand store，让 UserMenu 即时刷新昵称和头像
+      await fetchUserData();
       message.success("✨ 个人信息保存成功！");
       router.push("/");
     } catch (err) {

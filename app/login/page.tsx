@@ -51,7 +51,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       email,
       token: otp.trim(),
       type: "email",
@@ -59,12 +59,25 @@ export default function LoginPage() {
 
     if (error) {
       message.error("验证失败：" + error.message);
+      setLoading(false); // 失败才重置，让用户重试
     } else {
-      message.success("🎉 登录成功，欢迎回来！");
+      // 若 created_at 与 last_sign_in_at 相差不到 10 秒，视为首次注册
+      const user = data?.user;
+      const isNewUser =
+        user?.created_at &&
+        user?.last_sign_in_at &&
+        Math.abs(
+          new Date(user.last_sign_in_at).getTime() -
+            new Date(user.created_at).getTime(),
+        ) < 10_000;
+
+      message.success(
+        isNewUser ? "🎉 注册成功，欢迎加入！" : "🎉 登录成功，欢迎回来！",
+      );
       router.push("/");
       router.refresh();
+      // 成功后不重置 loading，保持按钮禁用直到页面跳走
     }
-    setLoading(false);
   };
 
   return (
@@ -86,7 +99,7 @@ export default function LoginPage() {
           </h1>
           <p className="text-orange-600/80 font-medium">
             {step === "email"
-              ? "欢迎回来，准备好聊天了吗？"
+              ? "输入邮箱，验证码一键登录"
               : `验证码已发往 ${email}`}
           </p>
         </div>

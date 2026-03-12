@@ -14,6 +14,7 @@ import {
   deleteChat,
 } from "@/lib/actions/chat";
 import { uploadImageClient, syncMessagesClient } from "@/lib/utils/upload";
+import { useUserStore } from "@/lib/store/user-store";
 
 // 子组件
 import { LoadingSpinner } from "@/app/components/chat/loading-spinner";
@@ -41,6 +42,7 @@ function ChatWindow({
     session.model || "fast",
   );
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const { refreshCallsStatus } = useUserStore();
 
   const {
     messages,
@@ -103,6 +105,9 @@ function ChatWindow({
         }
       }
       saveChat(session.id, title, model).catch(console.error);
+
+      // 通知 store 刷新今日剩余次数显示
+      refreshCallsStatus();
 
       // 只处理最后一条 assistant 消息里 AI 生成的图片（历史消息已是公开 URL）
       const uploadAiImages = async () => {
